@@ -8,9 +8,14 @@ cc_args(
     actions = [
         "@rules_cc//cc/toolchains/actions:cpp_compile_actions",
     ],
-    args = [
-        "-std=c++17",
-    ],
+    args = select({
+        "@llvm//constraints/windows/abi:msvc": [
+            "/clang:-std=c++17",
+        ],
+        "//conditions:default": [
+            "-std=c++17",
+        ],
+    }),
 )
 
 cc_args(
@@ -20,6 +25,8 @@ cc_args(
     ],
     args = select({
         "@platforms//os:none": [],
+        # The clang-cl driver spells this /GS.
+        "@llvm//constraints/windows/abi:msvc": [],
         "//conditions:default": ["-fstack-protector"],
     }) + [
         # All warnings are enabled.
@@ -34,9 +41,14 @@ cc_args(
         # Enable coloring even if there's no attached terminal. Bazel removes the
         # escape sequences if --nocolor is specified.
         "-fcolor-diagnostics",
-        # Keep stack frames for debugging, even in opt mode.
-        "-fno-omit-frame-pointer",
-    ],
+    ] + select({
+        # The clang-cl driver spells this /Oy-.
+        "@llvm//constraints/windows/abi:msvc": [],
+        "//conditions:default": [
+            # Keep stack frames for debugging, even in opt mode.
+            "-fno-omit-frame-pointer",
+        ],
+    }),
 )
 
 cc_feature(
@@ -72,6 +84,69 @@ cc_args(
     requires_not_none = "@rules_cc//cc/toolchains/variables:strip_debug_symbols",
 )
 
+# TODO: this removes `-static-libgcc` from MSVC, but probably from everything else, need to find a way to disable it for MSVC only
+cc_feature(
+    name = "static_libgcc",
+    overrides = "@rules_cc//cc/toolchains/features/legacy:static_libgcc",
+)
+
+cc_args(
+    name = "archiver_create_static_archive_llvm_ar_msvc",
+    actions = [
+        "@rules_cc//cc/toolchains/actions:cpp_link_static_library",
+    ],
+    args = [
+        "rcsD",
+        "{output_execpath}",
+    ],
+    format = {"output_execpath": "@rules_cc//cc/toolchains/variables:output_execpath"},
+    requires_not_none = "@rules_cc//cc/toolchains/variables:output_execpath",
+)
+
+cc_args(
+    name = "archiver_libraries_to_link_llvm_ar_msvc",
+    actions = [
+        "@rules_cc//cc/toolchains/actions:cpp_link_static_library",
+    ],
+    nested = [":archiver_libraries_to_link_expansion_llvm_ar_msvc"],
+    requires_not_none = "@rules_cc//cc/toolchains/variables:libraries_to_link",
+)
+
+cc_nested_args(
+    name = "archiver_libraries_to_link_expansion_llvm_ar_msvc",
+    iterate_over = "@rules_cc//cc/toolchains/variables:libraries_to_link",
+    nested = [
+        ":archiver_link_obj_file_llvm_ar_msvc",
+        ":archiver_link_object_file_group_llvm_ar_msvc",
+    ],
+)
+
+cc_nested_args(
+    name = "archiver_link_obj_file_llvm_ar_msvc",
+    args = ["{object_file}"],
+    format = {"object_file": "@rules_cc//cc/toolchains/variables:libraries_to_link.name"},
+    requires_equal = "@rules_cc//cc/toolchains/variables:libraries_to_link.type",
+    requires_equal_value = "object_file",
+)
+
+cc_nested_args(
+    name = "archiver_link_object_file_group_llvm_ar_msvc",
+    args = ["{object_files}"],
+    format = {"object_files": "@rules_cc//cc/toolchains/variables:libraries_to_link.object_files"},
+    iterate_over = "@rules_cc//cc/toolchains/variables:libraries_to_link.object_files",
+    requires_equal = "@rules_cc//cc/toolchains/variables:libraries_to_link.type",
+    requires_equal_value = "object_file_group",
+)
+
+cc_feature(
+    name = "archiver_flags",
+    args = [
+        ":archiver_create_static_archive_llvm_ar_msvc",
+        ":archiver_libraries_to_link_llvm_ar_msvc",
+    ],
+    overrides = "@rules_cc//cc/toolchains/features/legacy:archiver_flags",
+)
+
 cc_feature(
     name = "strip_debug_symbols",
     args = [
@@ -91,6 +166,7 @@ cc_feature_set(
     name = "all_legacy_builtin_features",
     all_of = [
         ":default_compile_flags",
+        ":static_libgcc",
     ],
     visibility = ["//visibility:public"],
 )
@@ -101,13 +177,10 @@ cc_feature_set(
     name = "experimental_replace_legacy_action_config_features",
     all_of = [
         ":no_legacy_features",
-        "@rules_cc//cc/toolchains/args/archiver_flags:feature",
-        "@rules_cc//cc/toolchains/args/pic_flags:feature",
         "@rules_cc//cc/toolchains/args/libraries_to_link:feature",
         "@rules_cc//cc/toolchains/args/linker_param_file:feature",
         "@rules_cc//cc/toolchains/args/preprocessor_defines:feature",
         "@rules_cc//cc/toolchains/args/random_seed:feature",
-        "@rules_cc//cc/toolchains/args/runtime_library_search_directories:feature",
         "@rules_cc//cc/toolchains/args/shared_flag:feature",
         ":strip_debug_symbols",
         "@rules_cc//cc/toolchains/args/strip_flags:feature",
@@ -132,7 +205,24 @@ cc_feature_set(
         # NOTE: This should come after user compile flags since some flags need to be added before the input file (e.g., -x lang)
         "@rules_cc//cc/toolchains/args/compiler_input_flags:feature",
         "@rules_cc//cc/toolchains/args/compiler_output_flags:feature",
-    ],
+    ] + select({
+        "@llvm//constraints/windows/abi:msvc": [
+            ":archiver_flags",
+        ],
+        "//conditions:default": [
+            "@rules_cc//cc/toolchains/args/archiver_flags:feature",
+        ],
+    }) + select({
+        "@llvm//constraints/windows/abi:msvc": [],
+        "//conditions:default": [
+            "@rules_cc//cc/toolchains/args/runtime_library_search_directories:feature",
+        ],
+    }) + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "@rules_cc//cc/toolchains/args/pic_flags:feature",
+        ],
+    }),
     visibility = ["//visibility:public"],
 )
 

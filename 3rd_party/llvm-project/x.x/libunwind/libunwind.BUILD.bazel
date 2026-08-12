@@ -131,10 +131,20 @@ cc_library(
         "@llvm//platforms/config:gnu": [
             "@glibc//:gnu_libc_headers",
         ],
-        "@platforms//os:windows": [
+        "@llvm//constraints/windows/abi:gnu": [
             "@mingw//:mingw_headers",
         ],
+        "@llvm//constraints/windows/abi:gnullvm": [
+            "@mingw//:mingw_headers",
+        ],
+        # The MSVC CRT supplies these headers.
+        "@llvm//constraints/windows/abi:msvc": [],
         "@platforms//os:macos": [],
+        # Windows platforms that declare no ABI default to mingw; see
+        # //constraints/windows/abi.
+        "//conditions:default": [
+            "@mingw//:mingw_headers",
+        ],
     }),
     includes = [
         "include",

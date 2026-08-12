@@ -197,6 +197,38 @@ def declare_llvm_targets(*, suffix = ""):
         visibility = ["//visibility:public"],
     )
 
+    # Targeting the MSVC ABI needs the cl.exe-compatible driver and linker
+    # instead of the GNU-style clang/lld used for every other target.
+    MSVC_TOOLS = {
+        "@rules_cc//cc/toolchains/actions:assembly_actions": ":clang-cl",
+        "@rules_cc//cc/toolchains/actions:c_compile": ":clang-cl",
+        "@rules_cc//cc/toolchains/actions:objc_compile": ":clang-cl",
+        "@llvm//toolchain:cpp_compile_actions_without_header_parsing": ":clang-cl",
+        "@rules_cc//cc/toolchains/actions:ar_actions": ":llvm-ar",
+        "@rules_cc//cc/toolchains/actions:link_actions": ":lld-link",
+    }
+
+    cc_tool_map(
+        name = "tools_for_msvc",
+        tools = BASE_TOOLS | COMPLETE_ONLY_TOOLS | MSVC_TOOLS,
+        visibility = ["//visibility:public"],
+    )
+
+    cc_tool_map(
+        name = "staged_tools_for_msvc",
+        tools = BASE_TOOLS | MSVC_TOOLS,
+        visibility = ["//visibility:public"],
+    )
+
+    native.alias(
+        name = "tools_for_msvc_for_runtime",
+        actual = select({
+            "@llvm//toolchain:runtimes_all": ":tools_for_msvc",
+            "//conditions:default": ":staged_tools_for_msvc",
+        }),
+        visibility = ["//visibility:public"],
+    )
+
     cc_tool(
         name = "clang",
         src = "bin/clang" + suffix,
@@ -218,6 +250,16 @@ def declare_llvm_targets(*, suffix = ""):
     )
 
     cc_tool(
+        name = "clang-cl",
+        src = "bin/clang-cl" + suffix,
+        data = [
+            ":builtin_resource_dir",
+        ],
+        capabilities = [],  # no pic support when targetting MSVC
+        allowlist_include_directories = [":builtin_resource_dir"],
+    )
+
+    cc_tool(
         name = "lld",
         src = "bin/clang++" + suffix,
         data = [
@@ -225,6 +267,7 @@ def declare_llvm_targets(*, suffix = ""):
             "bin/ld64.lld" + suffix,
             "bin/lld" + suffix,
             "bin/wasm-ld" + suffix,
+            "bin/lld-link" + suffix,
         ],
         capabilities = ["@rules_cc//cc/toolchains/capabilities:supports_start_end_lib"],
     )
@@ -267,6 +310,11 @@ def declare_llvm_targets(*, suffix = ""):
             "llvm_readtapi": "bin/llvm-readtapi" + suffix,
             "strip": ":strip_file",
         },
+    )
+
+    cc_tool(
+        name = "lld-link",
+        src = "bin/lld-link" + suffix,
     )
 
     cc_tool(
@@ -369,12 +417,29 @@ def declare_llvm_targets(*, suffix = ""):
                 "@llvm//runtimes/cxxstdlib:abi_headers_include_search_directory",
             ],
             "//conditions:default": [],
-        }) + [
-            "@mingw//:mingw_generated_headers_crt_directory",
-            "@mingw//:mingw_w64_headers_include_directory",
-            "@mingw//:mingw_w64_headers_crt_directory",
-            "@mingw//:mingw_w64_winpthreads_include_directory",
-        ],
+        }) + select({
+            "@llvm//platforms/config:abi_gnu": [
+                "@mingw//:mingw_generated_headers_crt_directory",
+                "@mingw//:mingw_w64_headers_include_directory",
+                "@mingw//:mingw_w64_headers_crt_directory",
+                "@mingw//:mingw_w64_winpthreads_include_directory",
+            ],
+            "@llvm//platforms/config:abi_gnullvm": [
+                "@mingw//:mingw_generated_headers_crt_directory",
+                "@mingw//:mingw_w64_headers_include_directory",
+                "@mingw//:mingw_w64_headers_crt_directory",
+                "@mingw//:mingw_w64_winpthreads_include_directory",
+            ],
+            "@llvm//platforms/config:abi_msvc": [
+                "@msvc_runtime//:msvc_include",
+                "@windows_sdk//:winsdk_ucrt_include",
+                "@windows_sdk//:winsdk_shared_include",
+                "@windows_sdk//:winsdk_um_include",
+                "@windows_sdk//:winsdk_winrt_include",
+            ],
+            # Windows platforms that declare no //constraints/windows/abi value.
+            "//conditions:default": [],
+        }),
     )
 
     include_path(

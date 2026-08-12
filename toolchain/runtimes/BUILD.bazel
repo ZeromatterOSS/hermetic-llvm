@@ -50,9 +50,16 @@ cc_args_list(
 
 cc_args_list(
     name = "windows_hosted_c_toolchain_args",
-    args = [
-        "//toolchain/args/windows:mingw_headers_include_search_paths",
-    ],
+    args = select({
+        # The mingw paths use -isystem, which the clang-cl driver ignores while
+        # treating the path itself as an input file.
+        "@llvm//constraints/windows/abi:msvc": [
+            "//toolchain/args/windows:msvc_headers_include_search_paths",
+        ],
+        "//conditions:default": [
+            "//toolchain/args/windows:mingw_headers_include_search_paths",
+        ],
+    }),
     visibility = ["//toolchain:__subpackages__"],
 )
 
@@ -80,7 +87,9 @@ cc_args_list(
             "//toolchain:macos_toolchain_args",
         ],
         "@platforms//os:linux": [],
-        "@platforms//os:windows": [],
+        "@platforms//os:windows": [
+            "//toolchain:windows_toolchain_args",
+        ],
         "@platforms//os:none": [],
     }),
     visibility = ["//toolchain:__subpackages__"],
@@ -134,6 +143,7 @@ cc_args_list(
         "//toolchain/runtimes/args:profile_flags",
 
         # Common default link flags.
+        "//toolchain/args:llvm_target_for_platform_link",
         "//toolchain/args:fuse_ld",
         "//toolchain/args:lto_plugin_target_flags",
         ":rtlib",

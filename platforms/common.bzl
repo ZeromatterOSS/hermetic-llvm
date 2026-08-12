@@ -38,3 +38,8 @@ LIBC_SUPPORTED_TARGETS = [
     ("linux", "s390x"),
     ("linux", "armv7"),
 ]
+
+ABI_SUPPORTED_TARGETS = [
+    ("windows", "x86_64"),
+    ("windows", "aarch64"),
+]

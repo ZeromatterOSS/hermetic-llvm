@@ -61,7 +61,12 @@ filegroup(
 
 filegroup(
     name = "static_runtime_lib",
-    srcs = ["//runtimes/cxxstdlib:static_runtime_lib"],
+    srcs = select({
+        # The MSVC CRT provides the unwinder and C++ runtime, and libc++ /
+        # libunwind are not built against it.
+        "@llvm//platforms/config:abi_msvc": [],
+        "//conditions:default": ["//runtimes/cxxstdlib:static_runtime_lib"],
+    }),
     visibility = ["//visibility:public"],
 )
 
@@ -114,6 +119,14 @@ filegroup(
         ":_tsan_dynamic_runtime_macos": ["//runtimes/compiler-rt:clang_rt.tsan.shared"],
         "//conditions:default": [],
     }),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "windows_msvc_runtime_lib",
+    srcs = [
+        "@compiler-rt//:clang_rt.builtins.static",
+    ],
     visibility = ["//visibility:public"],
 )
 
