@@ -59,12 +59,29 @@ def cc_toolchain(name, tool_map, module_map = None, extra_args = []):
             "@platforms//os:windows": [
                 "@llvm//toolchain/features:static_link_cpp_runtimes",
                 "@llvm//toolchain/features/runtime_library_search_directories:feature",
-                "@rules_cc//cc/toolchains/args/def_file:def_file",
                 "@llvm//toolchain/features:targets_windows",
             ],
             "@platforms//os:none": [],
+        }) + select({
+            # Both carry feature_name "def_file"; exactly one is ever enabled.
+            # Keyed on the ABI constraint throughout so the branches stay
+            # mutually exclusive.
+            "@llvm//constraints/windows/abi:msvc": [
+                "@llvm//toolchain/features:def_file_msvc",
+            ],
+            "@llvm//constraints/windows/abi:gnu": [
+                "@rules_cc//cc/toolchains/args/def_file:def_file",
+            ],
+            "@llvm//constraints/windows/abi:gnullvm": [
+                "@rules_cc//cc/toolchains/args/def_file:def_file",
+            ],
+            "//conditions:default": [],
+        }) + select({
+            "@llvm//constraints/windows/abi:msvc": [],
+            "//conditions:default": [
+                "@llvm//toolchain/features:prefer_pic_for_opt_binaries",
+            ],
         }) + [
-            "@llvm//toolchain/features:prefer_pic_for_opt_binaries",
             "@llvm//toolchain/features:sanitize_pwd",
             "@rules_cc//cc/toolchains/args/layering_check:module_maps",
             "@llvm//toolchain/features:module_map_home_cwd",
@@ -74,6 +91,24 @@ def cc_toolchain(name, tool_map, module_map = None, extra_args = []):
             "@llvm//toolchain/features:dbg",
             "@llvm//toolchain/features:archive_param_file",
             "@llvm//toolchain/features:parse_headers_wrapper",
+        ] + select({
+            "@llvm//constraints/windows/abi:msvc": [
+                "@llvm//toolchain/features:default_c_std",
+                "@llvm//toolchain/features:default_compile_flags_msvc",
+                "@llvm//toolchain/features:determinism",
+                "@llvm//toolchain/features:dynamic_link_msvcrt",
+                "@llvm//toolchain/features:nologo",
+                "@llvm//toolchain/features:no_dotd_file",
+                "@llvm//toolchain/features:supports_dynamic_linker",
+                "@llvm//toolchain/features:supports_interface_shared_libraries",
+                "@llvm//toolchain/features:has_configured_linker_path",
+                "@llvm//toolchain/features:msvc_implib_flags",
+                "@llvm//toolchain/features:compiler_param_file",
+                "@llvm//toolchain/features:parse_showincludes",
+                "@llvm//toolchain/features:windows_quoting_for_param_files",
+            ],
+            "//conditions:default": [],
+        }) + [
             "@llvm//toolchain/features/legacy:all_legacy_builtin_features",
             # Always last (contains user_compile_flags and user_link_flags who should apply last).
             "@llvm//toolchain/features/legacy:experimental_replace_legacy_action_config_features",
@@ -82,12 +117,29 @@ def cc_toolchain(name, tool_map, module_map = None, extra_args = []):
 
     cc_feature_set(
         name = name + "_runtimes_only_enabled_features",
-        all_of = [
-            "@llvm//toolchain/features:prefer_pic_for_opt_binaries",
+        all_of = select({
+            "@llvm//constraints/windows/abi:msvc": [],
+            "//conditions:default": [
+                "@llvm//toolchain/features:prefer_pic_for_opt_binaries",
+            ],
+        }) + [
             "@llvm//toolchain/features:sanitize_pwd",
             "@rules_cc//cc/toolchains/args/layering_check:module_maps",
             "@llvm//toolchain/features:module_map_home_cwd",
             "@llvm//toolchain/features:archive_param_file",
+        ] + select({
+            "@llvm//constraints/windows/abi:msvc": [
+                "@llvm//toolchain/features:default_c_std",
+                "@llvm//toolchain/features:default_compile_flags_msvc",
+                "@llvm//toolchain/features:determinism",
+                "@llvm//toolchain/features:nologo",
+                "@llvm//toolchain/features:no_dotd_file",
+                "@llvm//toolchain/features:compiler_param_file",
+                "@llvm//toolchain/features:parse_showincludes",
+                "@llvm//toolchain/features:windows_quoting_for_param_files",
+            ],
+            "//conditions:default": [],
+        }) + [
             # Always last (contains user_compile_flags and user_link_flags who should apply last).
             "@llvm//toolchain/features/legacy:experimental_replace_legacy_action_config_features",
         ],
@@ -107,12 +159,22 @@ def cc_toolchain(name, tool_map, module_map = None, extra_args = []):
         supports_header_parsing = True,
         supports_param_files = True,
         artifact_name_patterns = select({
+            "@platforms//os:linux": [],
             "@platforms//os:macos": [
                 "@llvm//toolchain:macos_dynamic_library_pattern",
                 "@llvm//toolchain:macos_interface_library_pattern",
             ],
             "@platforms//os:windows": [
                 "@llvm//toolchain:windows_executable_pattern",
+                "@llvm//toolchain:windows_dynamic_library_pattern",
+                "@llvm//toolchain:windows_interface_library_pattern",
+            ],
+            "@platforms//os:none": [],
+        }) + select({
+            "@llvm//constraints/windows/abi:msvc": [
+                "@llvm//toolchain:windows_msvc_alwayslink_static_library_pattern",
+                "@llvm//toolchain:windows_msvc_object_file_pattern",
+                "@llvm//toolchain:windows_msvc_static_library_pattern",
             ],
             "//conditions:default": [],
         }),
@@ -151,5 +213,8 @@ def cc_toolchain(name, tool_map, module_map = None, extra_args = []):
             "@llvm//toolchain:runtimes_stage1_hosted": "@llvm//runtimes:none",
             "//conditions:default": "@llvm//runtimes:dynamic_runtime_lib",
         }),
-        compiler = "clang",
+        compiler = select({
+            "@llvm//constraints/windows/abi:msvc": "clang-cl",
+            "//conditions:default": "clang",
+        }),
     )
