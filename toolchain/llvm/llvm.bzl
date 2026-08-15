@@ -413,8 +413,11 @@ def declare_llvm_targets(*, suffix = ""):
         srcs = [
             ":builtin_resource_dir",
         ] + select({
-            "@llvm//constraints/windows/abi:msvc": [],
-            "@llvm//toolchain:runtimes_all": [
+            "@llvm//toolchain:runtimes_all_windows_gnu": [
+                "@llvm//runtimes/cxxstdlib:headers_include_search_directory",
+                "@llvm//runtimes/cxxstdlib:abi_headers_include_search_directory",
+            ],
+            "@llvm//toolchain:runtimes_all_windows_gnullvm": [
                 "@llvm//runtimes/cxxstdlib:headers_include_search_directory",
                 "@llvm//runtimes/cxxstdlib:abi_headers_include_search_directory",
             ],
