@@ -19,9 +19,8 @@ bazel \
   build \
   --remote_header=x-buildbuddy-api-key=4jtaxdhxtyu4ylxdEwI7 \
   --@libarchive//:use_mbedtls=true \
-  --config=bootstrap \
-  --config=prebuilt \
   --config=remote \
+  --config=release \
   --remote_download_outputs=toplevel \
   //prebuilt/extras:for_all_platforms
 

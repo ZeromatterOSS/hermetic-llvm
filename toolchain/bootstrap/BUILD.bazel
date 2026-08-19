@@ -1,26 +1,35 @@
 load("@bazel_lib//:bzl_library.bzl", "bzl_library")
-load("//tools:defs.bzl", "TOOLCHAIN_BINARIES")
-load(":bootstrap_binary.bzl", "bootstrap_binary")
-
-# bootstrap toolchains are declared top level
-
-[
-    bootstrap_binary(
-        name = tool,
-        actual = "@llvm-project//llvm",
-        visibility = ["//visibility:public"],
-    )
-    for tool in TOOLCHAIN_BINARIES
-]
 
 bzl_library(
     name = "bootstrap_binary",
     srcs = ["bootstrap_binary.bzl"],
     visibility = ["//visibility:public"],
     deps = [
+        ":transition_settings",
+        "//tools:defs",
         "@bazel_lib//lib:copy_file",
         "@bazel_lib//lib:copy_to_directory",
     ],
+)
+
+bzl_library(
+    name = "fdo_profile",
+    srcs = ["fdo_profile.bzl"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":transition_settings",
+        "@rules_cc//cc:action_names_bzl",
+        "@rules_cc//cc:find_cc_toolchain_bzl",
+        "@rules_cc//cc/common",
+        "@rules_cc//cc/private/rules_impl/fdo:srcs",
+    ],
+)
+
+bzl_library(
+    name = "transition_settings",
+    srcs = ["transition_settings.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["@llvm-project//:version"],
 )
 
 bzl_library(
@@ -31,7 +40,7 @@ bzl_library(
         ":bootstrap_binary",
         "//platforms:common",
         "//toolchain:cc_toolchain",
-        "@llvm_config//:version",
+        "@llvm-project//:version",
         "@rules_cc//cc/toolchains:toolchain_rules",
     ],
 )

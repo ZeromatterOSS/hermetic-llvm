@@ -1,6 +1,5 @@
 load("@bazel_features//:features.bzl", "bazel_features")
-load("@llvm_config//:version.bzl", "LLVM_VERSION_MAJOR")
-load("@rules_cc//cc/toolchains:args.bzl", "cc_args")
+load("@llvm-project//:vars.bzl", "LLVM_VERSION_MAJOR")
 load("@rules_cc//cc/toolchains:tool.bzl", "cc_tool")
 load("@rules_cc//cc/toolchains:tool_map.bzl", "cc_tool_map")
 load("//platforms:common.bzl", "SUPPORTED_TARGETS")
@@ -15,61 +14,193 @@ def _validate_static_library_tool(prefix):
         "@rules_cc//cc/toolchains/actions:validate_static_library": prefix + "/static-library-validator",
     }
 
-def declare_tool_map(exec_os, exec_cpu):
-    prefix = exec_os + "_" + exec_cpu
+def _exec_prefix(exec_os, exec_cpu):
+    return "%s_%s" % (exec_os, exec_cpu)
 
+def _exec_platform_name(exec_os, exec_cpu):
+    return _exec_prefix(exec_os, exec_cpu) + "_platform"
+
+def _declare_exec_platform(exec_os, exec_cpu):
     native.platform(
-        name = prefix + "_platform",
+        name = _exec_platform_name(exec_os, exec_cpu),
         constraint_values = [
-            "@platforms//cpu:{}".format(exec_cpu),
-            "@platforms//os:{}".format(exec_os),
+            "@platforms//cpu:" + exec_cpu,
+            "@platforms//os:" + exec_os,
         ],
     )
 
-    COMMON_TOOLS = {
+def _bootstrap_cc_tool(prefix, tool, bootstrap_binary_kwargs, *, capabilities = [], data = [], symlink = True):
+    binary = prefix + "/bin/" + tool
+    bootstrap_binary(
+        name = binary,
+        actual = "@llvm-project//llvm:llvm.stripped",
+        symlink = symlink,
+        **bootstrap_binary_kwargs
+    )
+    cc_tool(
+        name = prefix + "/" + tool,
+        src = binary,
+        capabilities = capabilities,
+        data = data,
+    )
+
+def declare_tool_map(exec_os, exec_cpu, prefix = None, fdo_profile = None, fdo_instrumented = False):
+    if not prefix:
+        prefix = _exec_prefix(exec_os, exec_cpu)
+
+    platform_name = _exec_platform_name(exec_os, exec_cpu)
+    bootstrap_binary_kwargs = {
+        "fdo_profile": fdo_profile,
+        "platform": platform_name,
+        "fdo_instrumented": fdo_instrumented,
+        "visibility": ["//visibility:public"],
+    }
+
+    TOOLS_WITHOUT_LINKER = {
         "@rules_cc//cc/toolchains/actions:assembly_actions": prefix + "/clang",
         "@rules_cc//cc/toolchains/actions:c_compile": prefix + "/clang",
+        "@rules_cc//cc/toolchains/actions:gcov": prefix + "/gcov",
+        "@rules_cc//cc/toolchains/actions:llvm_cov": prefix + "/llvm-cov",
+        "@rules_cc//cc/toolchains/actions:llvm_profdata": prefix + "/llvm-profdata",
         "@rules_cc//cc/toolchains/actions:objc_compile": prefix + "/clang",
         "@llvm//toolchain:cpp_compile_actions_without_header_parsing": prefix + "/clang++",
-        "@rules_cc//cc/toolchains/actions:cpp_header_parsing": prefix + "/header-parser",
         "@rules_cc//cc/toolchains/actions:dwp": prefix + "/llvm-dwp",
-        "@rules_cc//cc/toolchains/actions:link_actions": prefix + "/lld",
         "@rules_cc//cc/toolchains/actions:objcopy_embed_data": prefix + "/llvm-objcopy",
         "@rules_cc//cc/toolchains/actions:strip": prefix + "/llvm-strip",
+    }
+    BASE_TOOLS = TOOLS_WITHOUT_LINKER | {
+        "@rules_cc//cc/toolchains/actions:link_actions": prefix + "/lld",
+    }
+
+    COMPLETE_ONLY_TOOLS = {
+        "@rules_cc//cc/toolchains/actions:cpp_header_parsing": prefix + "/header-parser",
     } | _validate_static_library_tool(prefix)
+
+    MSVC_TOOLS = {
+        "@rules_cc//cc/toolchains/actions:assembly_actions": prefix + "/clang-cl",
+        "@rules_cc//cc/toolchains/actions:c_compile": prefix + "/clang-cl",
+        "@rules_cc//cc/toolchains/actions:objc_compile": prefix + "/clang-cl",
+        "@llvm//toolchain:cpp_compile_actions_without_header_parsing": prefix + "/clang-cl",
+        "@rules_cc//cc/toolchains/actions:link_actions": prefix + "/lld-link",
+    }
 
     cc_tool_map(
         name = prefix + "/default_tools",
-        tools = COMMON_TOOLS | {
+        tools = BASE_TOOLS | COMPLETE_ONLY_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:ar_actions": prefix + "/llvm-ar",
+        },
+    )
+
+    cc_tool_map(
+        name = prefix + "/tools_with_interface_libraries",
+        tools = TOOLS_WITHOUT_LINKER | COMPLETE_ONLY_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:link_executable_actions": prefix + "/lld",
+            "@rules_cc//cc/toolchains/actions:dynamic_library_link_actions": prefix + "/link-wrapper",
             "@rules_cc//cc/toolchains/actions:ar_actions": prefix + "/llvm-ar",
         },
     )
 
     cc_tool_map(
         name = prefix + "/tools_with_libtool",
-        tools = COMMON_TOOLS | {
+        tools = BASE_TOOLS | COMPLETE_ONLY_TOOLS | {
             "@rules_cc//cc/toolchains/actions:ar_actions": prefix + "/llvm-libtool-darwin",
         },
     )
 
-    bootstrap_binary(
-        name = prefix + "/bin/clang",
-        platform = prefix + "_platform",
-        actual = "@llvm-project//llvm:llvm.stripped",
+    cc_tool_map(
+        name = prefix + "/tools_with_dsym",
+        tools = BASE_TOOLS | COMPLETE_ONLY_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:link_actions": prefix + "/link-wrapper",
+            "@rules_cc//cc/toolchains/actions:ar_actions": prefix + "/llvm-ar",
+        },
+    )
+
+    cc_tool_map(
+        name = prefix + "/tools_with_dsym_and_libtool",
+        tools = BASE_TOOLS | COMPLETE_ONLY_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:link_actions": prefix + "/link-wrapper",
+            "@rules_cc//cc/toolchains/actions:ar_actions": prefix + "/llvm-libtool-darwin",
+        },
+    )
+
+    cc_tool_map(
+        name = prefix + "/tools_for_msvc",
+        tools = BASE_TOOLS | COMPLETE_ONLY_TOOLS | MSVC_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:ar_actions": prefix + "/llvm-ar",
+        },
+    )
+
+    cc_tool_map(
+        name = prefix + "/staged_tools_for_msvc",
+        tools = BASE_TOOLS | MSVC_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:ar_actions": prefix + "/llvm-ar",
+        },
+    )
+
+    cc_tool_map(
+        name = prefix + "/staged_default_tools",
+        tools = BASE_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:ar_actions": prefix + "/llvm-ar",
+        },
+    )
+
+    cc_tool_map(
+        name = prefix + "/staged_tools_with_libtool",
+        tools = BASE_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:ar_actions": prefix + "/llvm-libtool-darwin",
+        },
+    )
+
+    native.alias(
+        name = prefix + "/default_tools_for_runtime",
+        actual = select({
+            "@llvm//toolchain:runtimes_all": prefix + "/default_tools",
+            "//conditions:default": prefix + "/staged_default_tools",
+        }),
+    )
+
+    native.alias(
+        name = prefix + "/tools_with_libtool_for_runtime",
+        actual = select({
+            "@llvm//toolchain:runtimes_all": prefix + "/tools_with_libtool",
+            "//conditions:default": prefix + "/staged_tools_with_libtool",
+        }),
+    )
+
+    native.alias(
+        name = prefix + "/tools_for_msvc_for_runtime",
+        actual = select({
+            "@llvm//toolchain:runtimes_all": prefix + "/tools_for_msvc",
+            "//conditions:default": prefix + "/staged_tools_for_msvc",
+        }),
     )
 
     bootstrap_directory(
         name = prefix + "/clang_builtin_headers_include_directory",
         srcs = "@llvm-project//clang:builtin_headers_files",
         # TODO(zbarsky): Probably shouldn't force platform here.
-        platform = prefix + "_platform",
+        platform = platform_name,
         destination = prefix + "/lib/clang/{}/include".format(LLVM_VERSION_MAJOR),
         strip_prefix = "clang/lib/Headers",
     )
 
-    cc_tool(
-        name = prefix + "/clang",
-        src = prefix + "/bin/clang",
+    _bootstrap_cc_tool(
+        prefix,
+        "clang",
+        bootstrap_binary_kwargs,
+        data = [
+            prefix + "/clang_builtin_headers_include_directory",
+        ],
+        capabilities = ["@rules_cc//cc/toolchains/capabilities:supports_pic"],
+    )
+
+    _bootstrap_cc_tool(
+        prefix,
+        "clang++",
+        bootstrap_binary_kwargs,
+        # Copy instead of symlink so clang's InstalledDir matches the packaged tree.
+        # This is crucial for properly locating the various linkers, since we don't use `-ld-path`.
+        symlink = False,
         data = [
             prefix + "/clang_builtin_headers_include_directory",
         ],
@@ -77,35 +208,33 @@ def declare_tool_map(exec_os, exec_cpu):
     )
 
     bootstrap_binary(
-        name = prefix + "/bin/clang++",
+        name = prefix + "/bin/clang-cl",
         platform = prefix + "_platform",
         actual = "@llvm-project//llvm:llvm.stripped",
         # Copy instead of symlink so clang's InstalledDir matches the packaged tree.
-        # This is crucial for properly locating the various linkers, since we don't use `-ld-path`.
         symlink = False,
     )
 
     cc_tool(
-        name = prefix + "/clang++",
-        src = prefix + "/bin/clang++",
+        name = prefix + "/clang-cl",
+        src = prefix + "/bin/clang-cl",
         data = [
             prefix + "/clang_builtin_headers_include_directory",
         ],
-        capabilities = ["@rules_cc//cc/toolchains/capabilities:supports_pic"],
+        capabilities = [],
     )
 
     bootstrap_binary(
         name = prefix + "/bin/header-parser",
-        platform = prefix + "_platform",
         actual = "@llvm//tools/internal:header-parser",
+        **bootstrap_binary_kwargs
     )
 
-    cc_args(
-        name = prefix + "/header-parser-args",
-        actions = [
-            "@rules_cc//cc/toolchains/actions:cpp_header_parsing",
-        ],
+    cc_tool(
+        name = prefix + "/header-parser",
+        src = prefix + "/bin/header-parser",
         data = [
+            prefix + "/clang_builtin_headers_include_directory",
             prefix + "/bin/clang++",
         ],
         env = {
@@ -116,38 +245,39 @@ def declare_tool_map(exec_os, exec_cpu):
         },
     )
 
-    cc_tool(
-        name = prefix + "/header-parser",
-        src = prefix + "/bin/header-parser",
-        data = [
-            prefix + "/clang_builtin_headers_include_directory",
-            prefix + "/bin/clang++",
-        ],
+    for tool in [
+        "llvm",
+        "llvm-ifs",
+        "llvm-nm",
+        "llvm-readtapi",
+    ]:
+        bootstrap_binary(
+            name = prefix + "/bin/" + tool,
+            actual = "@llvm-project//llvm:llvm.stripped",
+            **bootstrap_binary_kwargs
+        )
+
+    bootstrap_binary(
+        name = prefix + "/bin/c++filt",
+        actual = "@llvm-project//llvm:llvm.stripped",
+        **bootstrap_binary_kwargs
+    )
+
+    bootstrap_binary(
+        name = prefix + "/bin/dsymutil",
+        actual = "@llvm-project//llvm:llvm.stripped",
+        **bootstrap_binary_kwargs
     )
 
     bootstrap_binary(
         name = prefix + "/bin/static-library-validator",
-        platform = prefix + "_platform",
         actual = "@llvm//tools/internal:static-library-validator",
+        **bootstrap_binary_kwargs
     )
 
-    bootstrap_binary(
-        name = prefix + "/bin/llvm-nm",
-        platform = prefix + "_platform",
-        actual = "@llvm-project//llvm:llvm.stripped",
-    )
-
-    bootstrap_binary(
-        name = prefix + "/bin/c++filt",
-        platform = prefix + "_platform",
-        actual = "@llvm-project//llvm:llvm.stripped",
-    )
-
-    cc_args(
-        name = prefix + "/static-library-validator-args",
-        actions = [
-            "@rules_cc//cc/toolchains/actions:validate_static_library",
-        ],
+    cc_tool(
+        name = prefix + "/static-library-validator",
+        src = prefix + "/bin/static-library-validator",
         data = [
             prefix + "/bin/c++filt",
             prefix + "/bin/llvm-nm",
@@ -162,35 +292,32 @@ def declare_tool_map(exec_os, exec_cpu):
         },
     )
 
-    cc_tool(
-        name = prefix + "/static-library-validator",
-        src = prefix + "/bin/static-library-validator",
-        data = [
-            prefix + "/bin/c++filt",
-            prefix + "/bin/llvm-nm",
-        ],
-    )
-
     bootstrap_binary(
         name = prefix + "/bin/ld.lld",
-        platform = prefix + "_platform",
         actual = "@llvm-project//llvm:llvm.stripped",
+        **bootstrap_binary_kwargs
     )
 
     bootstrap_binary(
         name = prefix + "/bin/ld64.lld",
-        platform = prefix + "_platform",
         actual = "@llvm-project//llvm:llvm.stripped",
+        **bootstrap_binary_kwargs
     )
 
     bootstrap_binary(
         name = prefix + "/bin/lld",
-        platform = prefix + "_platform",
         actual = "@llvm-project//llvm:llvm.stripped",
+        **bootstrap_binary_kwargs
     )
 
     bootstrap_binary(
         name = prefix + "/bin/wasm-ld",
+        actual = "@llvm-project//llvm:llvm.stripped",
+        **bootstrap_binary_kwargs
+    )
+
+    bootstrap_binary(
+        name = prefix + "/bin/lld-link",
         platform = prefix + "_platform",
         actual = "@llvm-project//llvm:llvm.stripped",
     )
@@ -202,72 +329,96 @@ def declare_tool_map(exec_os, exec_cpu):
             prefix + "/bin/ld.lld",
             prefix + "/bin/ld64.lld",
             prefix + "/bin/lld",
+            prefix + "/bin/lld-link",
             prefix + "/bin/wasm-ld",
         ],
+        capabilities = ["@rules_cc//cc/toolchains/capabilities:supports_start_end_lib"],
     )
 
+    # Preserve the `-clang++` suffix for rustc's linker-flavor inference.
     bootstrap_binary(
-        name = prefix + "/bin/llvm-ar",
-        platform = prefix + "_platform",
-        actual = "@llvm-project//llvm:llvm.stripped",
+        name = prefix + "/bin/link-wrapper-clang++",
+        actual = "@llvm//tools/internal:link-wrapper",
+        **bootstrap_binary_kwargs
     )
 
     cc_tool(
-        name = prefix + "/llvm-ar",
-        src = prefix + "/bin/llvm-ar",
-    )
-
-    bootstrap_binary(
-        name = prefix + "/bin/llvm-libtool-darwin",
-        platform = prefix + "_platform",
-        actual = "@llvm-project//llvm:llvm.stripped",
+        name = prefix + "/lld-link",
+        src = prefix + "/bin/lld-link",
     )
 
     cc_tool(
-        name = prefix + "/llvm-libtool-darwin",
-        src = prefix + "/bin/llvm-libtool-darwin",
+        name = prefix + "/link-wrapper",
+        src = prefix + "/bin/link-wrapper-clang++",
+        data = [
+            prefix + "/bin/clang++",
+            prefix + "/bin/dsymutil",
+            prefix + "/bin/llvm-strip",
+            prefix + "/bin/ld.lld",
+            prefix + "/bin/ld64.lld",
+            prefix + "/bin/lld",
+            prefix + "/bin/llvm-ifs",
+            prefix + "/bin/llvm-nm",
+            prefix + "/bin/llvm-readtapi",
+            prefix + "/bin/wasm-ld",
+        ],
+        capabilities = [
+            "@rules_cc//cc/toolchains/capabilities:has_configured_linker_path",
+            "@rules_cc//cc/toolchains/capabilities:supports_interface_shared_libraries",
+            "@rules_cc//cc/toolchains/capabilities:supports_start_end_lib",
+        ],
+        env = {
+            "COMPILER_PATH": "{llvm}-",
+            "LLVM_CLANGXX": "{clangxx}",
+            "LLVM_DSYMUTIL": "{dsymutil}",
+            "LLVM_IFS": "{llvm_ifs}",
+            "LLVM_NM": "{llvm_nm}",
+            "LLVM_READTAPI": "{llvm_readtapi}",
+            "LLVM_STRIP": "{strip}",
+        },
+        format = {
+            "clangxx": prefix + "/bin/clang++",
+            "dsymutil": prefix + "/bin/dsymutil",
+            "llvm": prefix + "/bin/llvm",
+            "llvm_ifs": prefix + "/bin/llvm-ifs",
+            "llvm_nm": prefix + "/bin/llvm-nm",
+            "llvm_readtapi": prefix + "/bin/llvm-readtapi",
+            "strip": prefix + "/bin/llvm-strip",
+        },
     )
 
-    bootstrap_binary(
-        name = prefix + "/bin/llvm-dwp",
-        platform = prefix + "_platform",
-        actual = "@llvm-project//llvm:llvm.stripped",
-    )
+    for tool in [
+        "llvm-ar",
+        "llvm-libtool-darwin",
+        "llvm-dwp",
+        "gcov",
+        "llvm-cov",
+        "llvm-profdata",
+        "llvm-objcopy",
+    ]:
+        _bootstrap_cc_tool(prefix, tool, bootstrap_binary_kwargs)
 
-    cc_tool(
-        name = prefix + "/llvm-dwp",
-        src = prefix + "/bin/llvm-dwp",
-    )
-
-    bootstrap_binary(
-        name = prefix + "/bin/llvm-objcopy",
-        platform = prefix + "_platform",
-        actual = "@llvm-project//llvm:llvm.stripped",
-    )
-
-    cc_tool(
-        name = prefix + "/llvm-objcopy",
-        src = prefix + "/bin/llvm-objcopy",
-    )
-
-    bootstrap_binary(
-        name = prefix + "/bin/llvm-strip",
-        platform = prefix + "_platform",
-        actual = "@llvm-project//llvm:llvm.stripped",
-    )
-
-    cc_tool(
-        name = prefix + "/llvm-strip",
-        src = prefix + "/bin/llvm-strip",
+    _bootstrap_cc_tool(
+        prefix,
+        "llvm-strip",
+        bootstrap_binary_kwargs,
         # TODO: Remove this once rules_cc includes validate_static_library in
         # all_files, or cc_static_library uses the validate action's files
         # directly. This hangs validator files off strip because strip is an
         # exec-configured tool already included in rules_cc 0.2.18's legacy
         # file groups.
-        data = [
-            prefix + "/bin/static-library-validator",
+        data = select({
+            "@llvm//toolchain:runtimes_all": [
+                prefix + "/bin/static-library-validator",
+            ],
+            "//conditions:default": [],
+        }) + [
             prefix + "/bin/c++filt",
             prefix + "/bin/llvm-nm",
+            # CcToolchainInfo.all_files only includes rules_cc's
+            # LEGACY_FILE_GROUPS. Include llvm-profdata for
+            # LLVMFDOProfileMerge.
+            prefix + "/bin/llvm-profdata",
         ],
     )
 
@@ -289,40 +440,68 @@ def declare_toolchains(*, execs = None, targets = SUPPORTED_TARGETS):
         ]
 
     for (exec_os, exec_cpu) in execs:
-        declare_tool_map(exec_os, exec_cpu)
+        exec_prefix = _exec_prefix(exec_os, exec_cpu)
+        stage1_prefix = "stage1_" + exec_prefix
+        stage2_prefix = "stage2_" + exec_prefix
+        stage3_prefix = "stage3_" + exec_prefix
 
-        cc_toolchain_name = "bootstrap_{}_{}_cc_toolchain".format(exec_os, exec_cpu)
-
-        # Even though `tool_map` has an exec transition, Bazel doesn't properly handle
-        # binding a single `cc_toolchain` to multiple toolchains with different `exec_compatible_with`.
-        # See https://github.com/bazelbuild/rules_cc/issues/299#issuecomment-2660340534
-        cc_toolchain(
-            name = cc_toolchain_name,
-            tool_map = select({
-                "@rules_cc//cc/toolchains/args/archiver_flags:use_libtool_on_macos_setting": ":{}_{}/tools_with_libtool".format(exec_os, exec_cpu),
-                "//conditions:default": ":{}_{}/default_tools".format(exec_os, exec_cpu),
-            }),
-            extra_args = [
-                ":{}_{}/header-parser-args".format(exec_os, exec_cpu),
-                ":{}_{}/static-library-validator-args".format(exec_os, exec_cpu),
-            ],
+        _declare_exec_platform(exec_os, exec_cpu)
+        declare_tool_map(
+            exec_os,
+            exec_cpu,
+            prefix = stage3_prefix,
+            fdo_profile = "//toolchain/bootstrap/stage3:llvm_fdo_profdata",
+        )
+        declare_tool_map(
+            exec_os,
+            exec_cpu,
+            prefix = stage2_prefix,
+            fdo_instrumented = True,
+        )
+        declare_tool_map(
+            exec_os,
+            exec_cpu,
+            prefix = stage1_prefix,
         )
 
-        for (target_os, target_cpu) in targets:
-            native.toolchain(
-                name = "bootstrap_{}_{}_to_{}_{}".format(exec_os, exec_cpu, target_os, target_cpu),
-                exec_compatible_with = [
-                    "@platforms//cpu:{}".format(exec_cpu),
-                    "@platforms//os:{}".format(exec_os),
-                ],
-                target_compatible_with = [
-                    "@platforms//cpu:{}".format(target_cpu),
-                    "@platforms//os:{}".format(target_os),
-                ],
-                target_settings = [
-                    "@llvm//toolchain:bootstrapped_toolchain",
-                ],
-                toolchain = cc_toolchain_name,
-                toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
-                visibility = ["//visibility:public"],
+        for stage_name, tool_prefix, target_setting in [
+            ("stage3", stage3_prefix, "@llvm//toolchain:bootstrap_stage3_lto_and_fdo_applied"),
+            ("stage2", stage2_prefix, "@llvm//toolchain:bootstrap_stage2_lto_and_fdo_instrumented"),
+            ("stage1", stage1_prefix, "@llvm//toolchain:bootstrap_stage1_from_source"),
+        ]:
+            cc_toolchain_name = "%s_%s_%s_cc_toolchain" % (stage_name, exec_os, exec_cpu)
+
+            # Even though `tool_map` has an exec transition, Bazel doesn't properly handle
+            # binding a single `cc_toolchain` to multiple toolchains with different `exec_compatible_with`.
+            # See https://github.com/bazelbuild/rules_cc/issues/299#issuecomment-2660340534
+            cc_toolchain(
+                name = cc_toolchain_name,
+                tool_map = select({
+                    "@llvm//toolchain:linux_complete": ":%s/tools_with_interface_libraries" % tool_prefix,
+                    "@llvm//toolchain:macos_complete_with_libtool": ":%s/tools_with_dsym_and_libtool" % tool_prefix,
+                    "@llvm//toolchain:macos_complete": ":%s/tools_with_dsym" % tool_prefix,
+                    "@rules_cc//cc/toolchains/args/archiver_flags:use_libtool_on_apple_setting": ":%s/tools_with_libtool_for_runtime" % tool_prefix,
+                    "@llvm//platforms/config:windows_x86_64_msvc": ":%s_%s/tools_for_msvc_for_runtime" % (exec_os, exec_cpu),
+                    "@llvm//platforms/config:windows_aarch64_msvc": ":%s_%s/tools_for_msvc_for_runtime" % (exec_os, exec_cpu),
+                    "//conditions:default": ":%s/default_tools_for_runtime" % tool_prefix,
+                }),
             )
+
+            for (target_os, target_cpu) in targets:
+                native.toolchain(
+                    name = "%s_%s_%s_to_%s_%s" % (stage_name, exec_os, exec_cpu, target_os, target_cpu),
+                    exec_compatible_with = [
+                        "@platforms//cpu:" + exec_cpu,
+                        "@platforms//os:" + exec_os,
+                    ],
+                    target_compatible_with = [
+                        "@platforms//cpu:" + target_cpu,
+                        "@platforms//os:" + target_os,
+                    ],
+                    target_settings = [
+                        target_setting,
+                    ],
+                    toolchain = cc_toolchain_name,
+                    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+                    visibility = ["//visibility:public"],
+                )

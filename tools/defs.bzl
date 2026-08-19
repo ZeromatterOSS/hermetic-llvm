@@ -4,6 +4,9 @@ TOOLCHAIN_BINARIES = [
     "clang++",
     "clang-cl",
     "clang-cpp",
+    "clang-format",
+    "clang-tidy",
+    "clangd",
     "clang-scan-deps",
     "dsymutil",
     "gcov",
@@ -43,8 +46,5 @@ TOOLCHAIN_BINARIES = [
     "llvm-strip",
     "llvm-symbolizer",
     "llvm-windres",
-    # "clang-tidy",
-    # "clang-format",
-    # "clangd",
     "sancov",
 ]

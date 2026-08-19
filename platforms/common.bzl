@@ -16,6 +16,8 @@ SUPPORTED_TARGETS = [
     ("linux", "armv7"),
     ("windows", "x86_64"),
     ("windows", "aarch64"),
+    ("none", "bpfeb"),
+    ("none", "bpfel"),
     ("none", "wasm32"),
     ("none", "wasm64"),
 ]
@@ -35,4 +37,9 @@ LIBC_SUPPORTED_TARGETS = [
     ("linux", "riscv64"),
     ("linux", "s390x"),
     ("linux", "armv7"),
+]
+
+WINDOWS_ABI_SUPPORTED_TARGETS = [
+    ("windows", "x86_64"),
+    ("windows", "aarch64"),
 ]

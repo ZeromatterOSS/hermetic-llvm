@@ -1,7 +1,11 @@
+load("@bazel_features//:features.bzl", "bazel_features")
 load("@bazel_lib//lib:transitions.bzl", "platform_transition_binary", "platform_transition_filegroup")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@llvm//:defs.bzl", "exec_test")
+load("@llvm//3rd_party/gcc:version.bzl", "DEFAULT_GCC_VERSION", "libstdcxx_constraint_value")
 load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_import.bzl", "cc_import")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
@@ -11,11 +15,16 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(
     "//:defs.bzl",
     "asan_cc_binary",
+    "asan_cc_test",
     "cfi_cc_binary",
     "dfsan_cc_binary",
+    "external_include_paths_glibc_alias",
+    "external_include_paths_glibc_headers_test",
+    "fission_cc_binary",
     "fuzzer_asan_cc_binary",
     "fuzzer_cc_binary",
     "lsan_cc_binary",
+    "lsan_cc_test",
     "msan_cc_binary",
     "nsan_cc_binary",
     "opt_binary",
@@ -25,12 +34,52 @@ load(
     "tsan_cc_binary",
     "tysan_cc_binary",
     "ubsan_cc_binary",
+    "ubsan_cc_test",
     "xray_cc_binary",
 )
 load(":bazel_version.bzl", "validate_static_library_compatible")
 load(":musl_header_generation_tests.bzl", "musl_header_generation_tests")
+load(":windows_runtime_dynamic_libraries_test.bzl", "windows_runtime_dynamic_libraries_assertion")
 
 _VALIDATE_STATIC_LIBRARY_COMPATIBLE = validate_static_library_compatible()
+
+_DSYM_OUTPUT_TEST_BAZEL9_COMPATIBLE = bazel_features.cc.supports_starlarkified_toolchains
+
+_DSYM_OUTPUT_TEST_COMPATIBLE = select({
+    "@platforms//os:windows": ["@platforms//:incompatible"],
+    "//conditions:default": [],
+}) if _DSYM_OUTPUT_TEST_BAZEL9_COMPATIBLE else ["@platforms//:incompatible"]
+
+_DSYM_OUTPUT_TEST_DATA = [":main_dsym_bundle"] if _DSYM_OUTPUT_TEST_BAZEL9_COMPATIBLE else []
+
+_DSYM_OUTPUT_TEST_ENV = {
+    "DSYM_BUNDLE": "$(rootpath :main_dsym_bundle)",
+    "DWARF_FILE": "main_dsym",
+} if _DSYM_OUTPUT_TEST_BAZEL9_COMPATIBLE else {}
+
+_FISSION_TEST_COMPATIBLE = select({
+    "@platforms//os:linux": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+}) if bazel_features.cc.supports_starlarkified_toolchains else ["@platforms//:incompatible"]
+
+_ASAN_INTERNAL_SYMBOLIZER_SUPPORTED = bazel_features.cc.supports_starlarkified_toolchains
+
+_ASAN_LIBCXX_CONTAINER_OVERFLOW_TEST_COMPATIBLE = select({
+    "@platforms//os:linux": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+}) if _ASAN_INTERNAL_SYMBOLIZER_SUPPORTED else ["@platforms//:incompatible"]
+
+_EXTERNAL_INCLUDE_PATHS_TEST_COMPATIBLE = (
+    select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) +
+    select({
+        "@platforms//cpu:aarch64": [],
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    })
+) if bazel_features.cc.supports_starlarkified_toolchains else ["@platforms//:incompatible"]
 
 musl_header_generation_tests(name = "musl_header_generation_tests")
 
@@ -130,6 +179,44 @@ cc_binary(
     }),
 )
 
+cc_binary(
+    name = "libstdcxx_headers_dynamic",
+    srcs = ["libstdcxx_headers.cc"],
+    copts = ["-std=c++20"],
+    linkstatic = False,
+    target_compatible_with = select({
+        "@llvm//constraints/cxxstdlib:libstdcxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        # We do not support musl libc.so.
+        "@llvm//constraints/libc:musl": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = ["@gcc//:libstdcxxfs"],
+)
+
+cc_binary(
+    name = "libstdcxx_headers_dynamic_with_linkopts",
+    srcs = ["libstdcxx_headers.cc"],
+    copts = ["-std=c++20"],
+    linkopts = ["-lstdc++fs"],
+    linkstatic = False,
+    target_compatible_with = select({
+        "@llvm//constraints/cxxstdlib:libstdcxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        # We do not support musl libc.so.
+        "@llvm//constraints/libc:musl": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
 LIBSTDCXX_PLATFORMS = [
     ("linux_x86_64_libstdcxx", "@platforms//cpu:x86_64", "@llvm//constraints/libc:gnu.2.28"),
     ("linux_aarch64_libstdcxx", "@platforms//cpu:aarch64", "@llvm//constraints/libc:gnu.2.28"),
@@ -145,6 +232,8 @@ _LIBSTDCXX_E2E_TARGET_COMPATIBLE_WITH = select({
     "//conditions:default": ["@platforms//:incompatible"],
 })
 
+_DEFAULT_LIBSTDCXX_CONSTRAINT = "@llvm//constraints/cxxstdlib:" + libstdcxx_constraint_value(DEFAULT_GCC_VERSION)
+
 [
     platform(
         name = name,
@@ -152,7 +241,7 @@ _LIBSTDCXX_E2E_TARGET_COMPATIBLE_WITH = select({
             cpu,
             "@platforms//os:linux",
             libc,
-            "@llvm//constraints/cxxstdlib:libstdcxx",
+            _DEFAULT_LIBSTDCXX_CONSTRAINT,
         ],
     )
     for name, cpu, libc in LIBSTDCXX_PLATFORMS
@@ -176,6 +265,26 @@ platform_transition_filegroup(
     platform_transition_binary(
         name = "libstdcxx_main_dynamic_" + platform_name,
         binary = ":libstdcxx_main_dynamic",
+        target_compatible_with = _LIBSTDCXX_E2E_TARGET_COMPATIBLE_WITH,
+        target_platform = ":" + platform_name,
+    )
+    for platform_name, _, _ in LIBSTDCXX_PLATFORMS
+]
+
+[
+    platform_transition_binary(
+        name = "libstdcxx_headers_dynamic_" + platform_name,
+        binary = ":libstdcxx_headers_dynamic",
+        target_compatible_with = _LIBSTDCXX_E2E_TARGET_COMPATIBLE_WITH,
+        target_platform = ":" + platform_name,
+    )
+    for platform_name, _, _ in LIBSTDCXX_PLATFORMS
+]
+
+[
+    platform_transition_binary(
+        name = "libstdcxx_headers_dynamic_with_linkopts_" + platform_name,
+        binary = ":libstdcxx_headers_dynamic_with_linkopts",
         target_compatible_with = _LIBSTDCXX_E2E_TARGET_COMPATIBLE_WITH,
         target_platform = ":" + platform_name,
     )
@@ -225,6 +334,105 @@ cc_binary(
     linkstatic = True,
 )
 
+cc_binary(
+    name = "windows_add.dll",
+    srcs = ["windows_add.cc"],
+    linkshared = True,
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_import(
+    name = "windows_add_import",
+    shared_library = ":windows_add.dll",
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_binary(
+    name = "windows_runtime_dynamic_libraries_binary",
+    srcs = ["windows_dll_main.cc"],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [":windows_add_import"],
+)
+
+windows_runtime_dynamic_libraries_assertion(
+    name = "windows_runtime_dynamic_libraries_test",
+    runtime_library_basename = "windows_add.dll",
+    target = ":windows_runtime_dynamic_libraries_binary",
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+write_file(
+    name = "windows_explicit_def_file",
+    out = "windows_explicit.def",
+    content = [
+        "LIBRARY windows_explicit_def",
+        "EXPORTS",
+        "    add42=internal_add42",
+    ],
+)
+
+cc_binary(
+    name = "windows_explicit_def.dll",
+    srcs = ["windows_explicit_def.cc"],
+    linkshared = True,
+    target_compatible_with = ["@platforms//os:windows"],
+    win_def_file = ":windows_explicit_def_file",
+)
+
+cc_import(
+    name = "windows_explicit_def_import",
+    shared_library = ":windows_explicit_def.dll",
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_binary(
+    name = "windows_explicit_def_binary",
+    srcs = ["windows_explicit_def_test.cc"],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [":windows_explicit_def_import"],
+)
+
+cc_test(
+    name = "windows_explicit_def_test",
+    srcs = ["windows_explicit_def_test.cc"],
+    exec_properties = {"test.no-remote": "1"},
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [":windows_explicit_def_import"],
+)
+
+cc_library(
+    name = "windows_generated_def_library",
+    srcs = ["windows_generated_def.cc"],
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_binary(
+    name = "windows_generated_def.dll",
+    exec_compatible_with = [
+        "@platforms//os:windows",
+    ],
+    features = ["windows_export_all_symbols"],
+    linkopts = ["-Wl,--exclude-all-symbols"],
+    linkshared = True,
+    tags = ["no-remote"],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [":windows_generated_def_library"],
+)
+
+cc_import(
+    name = "windows_generated_def_import",
+    shared_library = ":windows_generated_def.dll",
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_test(
+    name = "windows_generated_def_test",
+    srcs = ["windows_generated_def_test.cc"],
+    exec_properties = {"test.no-remote": "1"},
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [":windows_generated_def_import"],
+)
+
 # dynamic linker + static runtime libs (even tho -static)
 # but because musl adds -static-pie, no dynamic linker at all.
 cc_binary(
@@ -270,6 +478,83 @@ cc_binary(
         "@platforms//os:windows": ["@platforms//:incompatible"],
         "//conditions:default": [],
     }),
+)
+
+fission_cc_binary(
+    name = "fission_main",
+    srcs = ["main.cc"],
+    target_compatible_with = _FISSION_TEST_COMPATIBLE,
+)
+
+sh_test(
+    name = "fission_debug_package_test",
+    srcs = ["fission_debug_package_test.sh"],
+    data = [":fission_main.dwp"],
+    env = {"DWP": "$(rootpath :fission_main.dwp)"},
+    target_compatible_with = _FISSION_TEST_COMPATIBLE,
+)
+
+cc_binary(
+    name = "main_dsym",
+    srcs = ["main.cc"],
+    features = [
+        "generate_dsym_file",
+        "strip_debug_symbols",
+    ],
+    target_compatible_with = select({
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+filegroup(
+    name = "main_dsym_bundle_",
+    srcs = [":main_dsym"],
+    output_group = "dsyms",
+)
+
+platform_transition_filegroup(
+    name = "main_dsym_bundle",
+    srcs = [":main_dsym_bundle_"],
+    target_platform = "@llvm//platforms:macos_aarch64",
+)
+
+sh_test(
+    name = "dsym_output_test",
+    srcs = ["dsym_output_test.sh"],
+    data = _DSYM_OUTPUT_TEST_DATA,
+    env = _DSYM_OUTPUT_TEST_ENV,
+    target_compatible_with = _DSYM_OUTPUT_TEST_COMPATIBLE,
+)
+
+external_include_paths_glibc_alias(
+    name = "external_include_paths_glibc_start",
+    # buildifier: disable=canonical-repository
+    actual = select({
+        "@platforms//cpu:aarch64": "@@llvm++glibc+glibc_aarch64-linux-gnu.2.34//:glibc_start",
+        "@platforms//cpu:x86_64": "@@llvm++glibc+glibc_x86_64-linux-gnu.2.34//:glibc_start",
+    }),
+    # buildifier: enable=canonical-repository
+    tags = ["manual"],
+    target_compatible_with = _EXTERNAL_INCLUDE_PATHS_TEST_COMPATIBLE,
+)
+
+external_include_paths_glibc_headers_test(
+    name = "external_include_paths_glibc_headers_test",
+    glibc_start = ":external_include_paths_glibc_start",
+    target_compatible_with = _EXTERNAL_INCLUDE_PATHS_TEST_COMPATIBLE,
+)
+
+sh_test(
+    name = "external_include_paths_test",
+    srcs = ["external_include_paths_test.sh"],
+    args = [
+        "$(rootpath @external_include_paths_test//:error_header_binary)",
+    ],
+    data = [
+        "@external_include_paths_test//:error_header_binary",
+    ],
+    target_compatible_with = _EXTERNAL_INCLUDE_PATHS_TEST_COMPATIBLE,
 )
 
 # TODO(zbarsky): Turn more of this into a macro once we have more sanitizers?
@@ -454,6 +739,7 @@ tsan_cc_binary(
     srcs = ["tsan_fail.cc"],
     target_compatible_with = select({
         "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
@@ -466,6 +752,9 @@ exec_test(
     rule = sh_test,
     target_compatible_with = select({
         # firecracker + docker on arm64 is too restrictive.
+        # macOS: the TSan dylib builds/links/loads, but the runtime crashes
+        # during init (allocator/shadow setup) on arm64 — runtime support is a
+        # separate follow-up, so the runtime test stays Linux-only for now.
         "@llvm//platforms/config:linux_x86_64": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
@@ -474,20 +763,48 @@ exec_test(
 asan_cc_binary(
     name = "asan_fail",
     srcs = ["asan_fail.cc"],
-    linkopts = [
-        "-Wl,--icf=none",
-    ],
+    linkopts = select({
+        # --icf is an ld.lld (ELF) flag; ld64.lld on macOS does not accept it.
+        "@platforms//os:linux": ["-Wl,--icf=none"],
+        "//conditions:default": [],
+    }),
     target_compatible_with = select({
         "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
 
 exec_test(
+    name = "asan_libcxx_container_overflow_test",
+    srcs = ["asan_libcxx_container_overflow.cc"],
+    copts = ["-fno-exceptions"],
+    linkopts = ["-Wl,--icf=none"],
+    rule = asan_cc_binary,
+    target_compatible_with = _ASAN_LIBCXX_CONTAINER_OVERFLOW_TEST_COMPATIBLE,
+)
+
+exec_test(
     name = "asan_output_test",
     srcs = ["asan_output_test.sh"],
-    data = [":asan_fail"],
-    env = {"BINARY": "$(rootpath :asan_fail)"},
+    data = [":asan_fail"] + select({
+        "@platforms//os:macos": ["@llvm//tools:llvm-symbolizer"],
+        "@platforms//os:linux": [] if _ASAN_INTERNAL_SYMBOLIZER_SUPPORTED else ["@llvm//tools:llvm-symbolizer"],
+        "//conditions:default": [],
+    }),
+    env = select({
+        "@platforms//os:macos": {
+            "ASAN_SYMBOLIZER_PATH": "$(rootpath @llvm//tools:llvm-symbolizer)",
+            "BINARY": "$(rootpath :asan_fail)",
+        },
+        "@platforms//os:linux": {
+            "BINARY": "$(rootpath :asan_fail)",
+        } if _ASAN_INTERNAL_SYMBOLIZER_SUPPORTED else {
+            "ASAN_SYMBOLIZER_PATH": "$(rootpath @llvm//tools:llvm-symbolizer)",
+            "BINARY": "$(rootpath :asan_fail)",
+        },
+        "//conditions:default": {"BINARY": "$(rootpath :asan_fail)"},
+    }),
     rule = sh_test,
 )
 
@@ -496,6 +813,7 @@ lsan_cc_binary(
     srcs = ["lsan_fail.cc"],
     target_compatible_with = select({
         "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
@@ -509,6 +827,37 @@ exec_test(
     target_compatible_with = select({
         "@platforms//os:linux": [],
         "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+# A cc_test links dynamically, so on macOS its sanitizer runtime dylib is
+# supplied by the toolchain (no per-target dynamic_deps). These verify that
+# wiring end to end -- the runtime loads and is functional -- per sanitizer, on
+# each OS that supports the sanitizer's runtime.
+asan_cc_test(
+    name = "asan_runtime_cc_test",
+    srcs = ["asan_runtime_cc_test.cc"],
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+ubsan_cc_test(
+    name = "ubsan_runtime_cc_test",
+    srcs = ["ubsan_runtime_cc_test.cc"],
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+lsan_cc_test(
+    name = "lsan_runtime_cc_test",
+    srcs = ["lsan_runtime_cc_test.cc"],
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
     }),
 )
 
@@ -540,14 +889,10 @@ platform_transition_binary(
 cc_test(
     name = "windows_test",
     srcs = ["windows_test.cc"],
-    exec_compatible_with = [
-        "@platforms//os:windows",
-    ],
+    exec_properties = {"test.no-remote": "1"},
     linkopts = [
         "-luuid",
     ],
-    # TODO(zbarsky): Tests can't execute remotely from Windows hosts
-    tags = ["no-remote"],
     target_compatible_with = [
         "@platforms//os:windows",
     ],
@@ -556,12 +901,8 @@ cc_test(
 cc_test(
     name = "windows_unicode_test",
     srcs = ["windows_unicode_test.cc"],
-    exec_compatible_with = [
-        "@platforms//os:windows",
-    ],
+    exec_properties = {"test.no-remote": "1"},
     linkopts = ["-municode"],
-    # TODO(zbarsky): Tests can't execute remotely from Windows hosts
-    tags = ["no-remote"],
     target_compatible_with = [
         "@platforms//os:windows",
     ],
@@ -571,11 +912,8 @@ cc_test(
     name = "pthread_test",
     srcs = ["pthread.cc"],
     copts = ["-pthread"],
-    exec_compatible_with = HOST_CONSTRAINTS,
+    exec_properties = {"test.no-remote": "1"},
     linkopts = ["-pthread"],
-    # remote-exec tests can't run without forcing the target platform to match
-    # the remote exec platform.
-    tags = ["no-remote"],
 )
 
 cc_test(
@@ -675,21 +1013,23 @@ cc_static_library(
     deps = [":comm_symbol_defs"],
 )
 
-sh_test(
+cc_test(
     name = "duplicate_static_library_validator_test",
     size = "large",
-    srcs = ["duplicate_static_library_failure_test.sh"],
+    srcs = ["duplicate_static_library_failure_test.cc"],
     data = [
+        ".bazelrc",
         "BUILD.bazel",
         "duplicate_symbol_a.cc",
         "duplicate_symbol_b.cc",
     ],
-    env_inherit = ["PATH"],
-    tags = ["local"],
-    target_compatible_with = _VALIDATE_STATIC_LIBRARY_COMPATIBLE + select({
-        "@platforms//os:windows": ["@platforms//:incompatible"],
-        "//conditions:default": [],
-    }),
+    env_inherit = [
+        "PATH",
+        "RUNNER_TEMP",
+    ],
+    exec_properties = {"test.local": "1"},
+    target_compatible_with = _VALIDATE_STATIC_LIBRARY_COMPATIBLE,
+    deps = ["@bazel_tools//tools/cpp/runfiles"],
 )
 
 #######################################################
@@ -699,6 +1039,7 @@ fuzzer_cc_binary(
     srcs = ["fuzzer_main.cc"],
     target_compatible_with = select({
         "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
@@ -724,6 +1065,7 @@ exec_test(
     tags = ["no-remote"],
     target_compatible_with = select({
         "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
@@ -733,6 +1075,7 @@ fuzzer_asan_cc_binary(
     srcs = ["fuzzer_asan_main.cc"],
     target_compatible_with = select({
         "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
@@ -751,6 +1094,7 @@ exec_test(
     tags = ["no-remote"],
     target_compatible_with = select({
         "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
@@ -760,6 +1104,7 @@ fuzzer_cc_binary(
     srcs = ["fuzzer_ubsan_main.cc"],
     target_compatible_with = select({
         "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
@@ -778,6 +1123,7 @@ exec_test(
     tags = ["no-remote"],
     target_compatible_with = select({
         "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
@@ -797,4 +1143,27 @@ sh_test(
         "@platforms//os:windows": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
+)
+
+# Library + test exercised by the `bazel coverage` integration test
+# (coverage_lcov_test.sh). Plain `bazel test //...` builds and runs the test as
+# an ordinary test; coverage_lcov_test.sh re-runs it under `bazel coverage` and
+# asserts the lcov report has real per-line data.
+cc_library(
+    name = "coverage_lib",
+    srcs = ["coverage_lib.cc"],
+    hdrs = ["coverage_lib.h"],
+)
+
+cc_test(
+    name = "coverage_lib_test",
+    srcs = ["coverage_lib_test.cc"],
+    # Coverage is only validated on Linux/macOS (coverage_lcov_test.sh). Exclude
+    # Windows so `bazel test //...` there does not run this unsupported test.
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":coverage_lib"],
 )

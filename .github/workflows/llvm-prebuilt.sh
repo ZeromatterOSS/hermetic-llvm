@@ -24,7 +24,7 @@ if [[ ! "${BRANCH_NAME}" =~ ^llvm- ]]; then
 fi
 
 BRANCH_PAYLOAD="${BRANCH_NAME#llvm-}"
-BASE_BRANCH_VERSION="${BRANCH_PAYLOAD%%-*}"
+BASE_BRANCH_VERSION="${BRANCH_PAYLOAD%-*}"
 
 if [[ "${BASE_BRANCH_VERSION}" != "${LLVM_VERSION}" ]]; then
   echo "Branch version '${BASE_BRANCH_VERSION}' does not match LLVM_VERSION '${LLVM_VERSION}'" >&2
@@ -35,9 +35,8 @@ bazel \
   --bazelrc=".github/workflows/ci.bazelrc" \
   build \
   --remote_header=x-buildbuddy-api-key=4jtaxdhxtyu4ylxdEwI7 \
-  --config=bootstrap \
-  --config=prebuilt \
   --config=remote \
+  --config=release \
   --remote_download_outputs=toplevel \
   //prebuilt/llvm:all
 

@@ -28,8 +28,12 @@ jobs:
           - "e2e/rules_rust"
           - "e2e/rules_rs"
           - "e2e/cross_compilation"
-          - "e2e/wasm"
           - "examples/custom_targets"
+        include:
+          # Path mapping requires Bazel 9+.
+          - bazel_version: last_rc
+            folder: "e2e/rules_cc"
+            extra_flags: "--experimental_output_paths=strip"
     runs-on: ${{ matrix.os }}
 
     # Configure a human readable name for each job
@@ -69,7 +73,16 @@ jobs:
             --bazelrc=.bazelrc \
             test \
             --remote_header=x-buildbuddy-api-key=4jtaxdhxtyu4ylxdEwI7 \
+            ${{ matrix.extra_flags }} \
             //...
+
+      - name: bazel coverage e2e (lcov)
+        if: matrix.folder == 'e2e/rules_cc' && matrix.bazel_version == 'last_rc'
+        env:
+          USE_BAZEL_VERSION: ${{ matrix.bazel_version }}
+        working-directory: ${{ matrix.folder }}
+        shell: bash
+        run: ./coverage_lcov_test.sh --remote_header=x-buildbuddy-api-key=4jtaxdhxtyu4ylxdEwI7
 
   test_windows:
     strategy:
@@ -82,7 +95,6 @@ jobs:
           # - "e2e/rules_foreign_cc" TODO: Current tests only support linux
           # - "e2e/rules_rust" - Need a bazel nightly with https://github.com/bazelbuild/bazel/pull/28038
           - "e2e/cross_compilation"
-          # - "e2e/wasm"
     runs-on: ${{ matrix.os }}
 
     # Configure a human readable name for each job
@@ -115,7 +127,7 @@ jobs:
             $EXTRA_ARGS \
             //...
 
-  # Smoke tests for macOS. Only //:main_default, no-remote.
+  # macOS: smoke build (//:main_default) plus the supported sanitizer e2e tests.
   test_macos:
     strategy:
       fail-fast: false
@@ -127,7 +139,6 @@ jobs:
           # - "e2e/rules_foreign_cc" TODO: Current tests only support linux
           # - "e2e/rules_rust" - Need a bazel nightly with https://github.com/bazelbuild/bazel/pull/28038
           # - "e2e/cross_compilation"
-          # - "e2e/wasm"
     runs-on: ${{ matrix.os }}
 
     # Configure a human readable name for each job
@@ -148,6 +159,141 @@ jobs:
             build \
             --remote_header=x-buildbuddy-api-key=4jtaxdhxtyu4ylxdEwI7 \
             //:main_default
+
+      # ASan, UBSan and libFuzzer are fully supported on macOS: run their e2e
+      # tests (they execute locally — no remote executor is configured for
+      # macOS).
+      # TSan and LSan build, link and load on macOS, but their runtime support
+      # is a follow-up, so we only validate that their instrumented binaries
+      # build (the runtime e2e tests stay Linux-only).
+      - name: bazel test macOS sanitizers
+        env:
+          USE_BAZEL_VERSION: ${{ matrix.bazel_version }}
+        working-directory: ${{ matrix.folder }}
+        shell: bash
+        run: |
+          bazel \
+            --bazelrc=.bazelrc \
+            test \
+            --remote_header=x-buildbuddy-api-key=4jtaxdhxtyu4ylxdEwI7 \
+            //:asan_output_test \
+            //:ubsan_output_test \
+            //:fuzzer_output_test \
+            //:fuzzer_asan_output_test \
+            //:fuzzer_ubsan_output_test
+          bazel \
+            --bazelrc=.bazelrc \
+            build \
+            --remote_header=x-buildbuddy-api-key=4jtaxdhxtyu4ylxdEwI7 \
+            //:tsan_fail \
+            //:lsan_fail
+
+      - name: bazel coverage macOS e2e (lcov)
+        env:
+          USE_BAZEL_VERSION: ${{ matrix.bazel_version }}
+        working-directory: ${{ matrix.folder }}
+        shell: bash
+        run: ./coverage_lcov_test.sh --remote_header=x-buildbuddy-api-key=4jtaxdhxtyu4ylxdEwI7
+
+  llvm_version_analysis:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Normal CI covers the default LLVM release. Keep one release for each
+        # other supported LLVM major here.
+        llvm_version: ["21.1.8", "23.1.0-rc1"]
+    runs-on: ubuntu-latest
+    name: Analyze LLVM ${{ matrix.llvm_version }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select LLVM ${{ matrix.llvm_version }}
+        env:
+          LLVM_VERSION: ${{ matrix.llvm_version }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          for module_file in [
+              Path("MODULE.bazel"),
+              Path("e2e/llvm_version_selection/MODULE.bazel"),
+          ]:
+              module_text = module_file.read_text()
+              module_text, replacement_count = re.subn(
+                  r'^LLVM_VERSION = "[^"]+"$',
+                  f'LLVM_VERSION = "{os.environ["LLVM_VERSION"]}"',
+                  module_text,
+                  count=1,
+                  flags=re.MULTILINE,
+              )
+              if replacement_count != 1:
+                  raise SystemExit(f"Expected exactly one LLVM_VERSION assignment in {module_file}")
+              module_file.write_text(module_text)
+          PY
+
+      - name: Analyze LLVM ${{ matrix.llvm_version }} driver
+        shell: bash
+        run: |
+          bazel build --nobuild //toolchain/bootstrap/stage1:llvm
+
+      - name: Verify consumer prebuilt LLVM ${{ matrix.llvm_version }} selection
+        env:
+          LLVM_VERSION: ${{ matrix.llvm_version }}
+        working-directory: e2e/llvm_version_selection
+        shell: bash
+        run: |
+          bazel --bazelrc=/dev/null build --nobuild //:hello --lockfile_mode=off
+          resource_dir="$(bazel --bazelrc=/dev/null cquery @llvm//:builtin_resource_dir --output=files --lockfile_mode=off)"
+          expected_suffix="/lib/clang/${LLVM_VERSION%%.*}"
+          if [[ "${resource_dir}" != *"${expected_suffix}" ]]; then
+            echo "Expected LLVM ${LLVM_VERSION} resource directory ending in ${expected_suffix}, got ${resource_dir}" >&2
+            exit 1
+          fi
+
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+        bazel_version: [8.x, last_rc]
+    runs-on: ${{ matrix.os }}
+    name: Test //tests/... with Bazel ${{ matrix.bazel_version }} on ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Mount bazel caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazel-repo
+          key: bazel-cache-tests-${{ matrix.os }}-${{ matrix.bazel_version }}-${{ hashFiles('**/BUILD.bazel', '**/*.bzl', 'MODULE.bazel') }}
+          restore-keys: |
+            bazel-cache-tests-${{ matrix.os }}-${{ matrix.bazel_version }}
+
+      - name: bazel query kernel headers and test //tests/...
+        env:
+          USE_BAZEL_VERSION: ${{ matrix.bazel_version }}
+        shell: bash
+        run: |
+          bazel \
+            --bazelrc=$GITHUB_WORKSPACE/.github/workflows/ci.bazelrc \
+            --bazelrc=.bazelrc \
+            query \
+            --remote_header=x-buildbuddy-api-key=4jtaxdhxtyu4ylxdEwI7 \
+            --output=package \
+            'deps(set(@kernel_headers//:3.6_kernel_headers @kernel_headers//:3.6_kernel_headers_directory @kernel_headers//:4.14_kernel_headers @kernel_headers//:4.14_kernel_headers_directory))'
+
+          bazel \
+            --bazelrc=$GITHUB_WORKSPACE/.github/workflows/ci.bazelrc \
+            --bazelrc=.bazelrc \
+            test \
+            --remote_header=x-buildbuddy-api-key=4jtaxdhxtyu4ylxdEwI7 \
+            //tests/...
 
   docs:
     runs-on: macos-15-intel

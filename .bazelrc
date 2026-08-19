@@ -35,28 +35,19 @@ common --incompatible_config_setting_private_default_visibility
 
 common:cc --@rules_python//python/config_settings:bootstrap_impl=script
 
-common:bootstrap   --@llvm//toolchain:source=bootstrapped
-
-# Bootstrap Go compilers from source with our patch.
-common:wasm --@rules_go//go/toolchain:source=bootstrapped
-
-common:prebuilt  -c opt
-common:prebuilt  --strip=always
-common:prebuilt  --stripopt=--strip-all
-# Use ThinLTO when available (on Linux), but it doesn't work for Darwin targets, so also enable `flto=thin` as fallback.
-common:prebuilt   --features=thin_lto
-common:prebuilt  --copt=-flto=thin
-common:prebuilt  --copt=-fno-exceptions
-common:prebuilt  --copt=-fno-rtti
-common:prebuilt  --copt=-fomit-frame-pointer
-common:prebuilt  --dynamic_mode=off
-common:prebuilt  --extra_toolchains=//toolchain:all
-# See https://github.com/llvm/llvm-project/blob/497a6d672263343f58eae5a5e697484f4899fbdc/utils/bazel/llvm-project-overlay/llvm/driver.bzl#L11
-common:prebuilt --@llvm-project//llvm:driver-tools=clang-scan-deps,clang,dsymutil,lld,llvm-ar,llvm-cgdata,llvm-cov,llvm-cxxfilt,llvm-debuginfod-find,llvm-dwp,llvm-gsymutil,llvm-ifs,llvm-libtool-darwin,llvm-link,llvm-lipo,llvm-ml,llvm-mt,llvm-nm,llvm-objcopy,llvm-objdump,llvm-profdata,llvm-rc,llvm-readobj,llvm-readtapi,llvm-size,llvm-symbolizer,sancov
+common:release  -c opt
+common:release  --strip=always
+common:release  --stripopt=--strip-all
+common:release  --features=thin_lto
+common:release  --copt=-fno-exceptions
+common:release  --copt=-fno-rtti
+common:release  --copt=-fomit-frame-pointer
+common:release  --dynamic_mode=off
+common:release  --extra_toolchains=//toolchain:all
+common:release  --extra_execution_platforms=@llvm//:rbe_linux_x86_64,@llvm//:rbe_linux_aarch64
 
 common:rust    --@rules_cc//cc/toolchains/args/archiver_flags:use_libtool_on_macos=False
 common:rust    --@rules_rust//rust/settings:experimental_use_sh_toolchain_for_bootstrap_process_wrapper
-common:rust    --@llvm//config:experimental_stub_libgcc_s=True
 
 common --bes_results_url=https://app.buildbuddy.io/invocation/
 common --bes_backend=grpcs://remote.buildbuddy.io
@@ -73,6 +64,7 @@ common --grpc_keepalive_time=30s
 common:remote --remote_executor=grpcs://remote.buildbuddy.io
 common:remote --jobs=800
 common:remote --extra_execution_platforms=@llvm//:rbe_platform
+common:remote --rewind_lost_inputs
 
 common --per_file_copt=external/.*llvm-project.*@-Wno-thread-safety-analysis
 common --host_per_file_copt=external/.*llvm-project.*@-Wno-thread-safety-analysis

@@ -4,7 +4,6 @@ load("@rules_cc//cc/toolchains:args.bzl", "cc_args")
 load("@rules_cc//cc/toolchains:tool.bzl", "cc_tool")
 load("@rules_cc//cc/toolchains:tool_map.bzl", "cc_tool_map")
 load("//:directory.bzl", "headers_directory")
-load("//toolchain:selects.bzl", "platform_extra_binary", "platform_extra_binary_files")
 
 _VALIDATE_STATIC_LIBRARY_TOOL = {
     "@rules_cc//cc/toolchains/actions:validate_static_library": ":static_library_validator",
@@ -22,16 +21,30 @@ def declare_llvm_targets(*, suffix = ""):
     native.exports_files(native.glob(["bin/*"]))
 
     native.filegroup(
+        name = "llvm_bin_directory",
+        srcs = ["bin"],
+    )
+
+    native.filegroup(
         name = "clangxx_file",
         srcs = ["bin/clang++" + suffix],
     )
 
-    cc_args(
-        name = "header_parser_args",
-        actions = [
-            "@rules_cc//cc/toolchains/actions:cpp_header_parsing",
-        ],
+    native.filegroup(
+        name = "dsymutil_file",
+        srcs = ["bin/dsymutil" + suffix],
+    )
+
+    native.filegroup(
+        name = "strip_file",
+        srcs = ["bin/llvm-strip" + suffix],
+    )
+
+    cc_tool(
+        name = "header_parser",
+        src = "@llvm//tools/internal:header-parser",
         data = [
+            ":builtin_resource_dir_expanded",
             ":clangxx_file",
         ],
         env = {
@@ -40,17 +53,7 @@ def declare_llvm_targets(*, suffix = ""):
         format = {
             "clangxx": ":clangxx_file",
         },
-        visibility = ["//visibility:public"],
-    )
-
-    cc_tool(
-        name = "header_parser",
-        src = platform_extra_binary("bin/header-parser"),
-        data = [
-            ":builtin_resource_dir",
-            ":clangxx_file",
-        ],
-        allowlist_include_directories = [":builtin_resource_dir"],
+        allowlist_include_directories = [":builtin_resource_dir_expanded"],
     )
 
     cc_args(
@@ -59,7 +62,7 @@ def declare_llvm_targets(*, suffix = ""):
             "@rules_cc//cc/toolchains/actions:compile_actions",
         ],
         allowlist_include_directories = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ],
         args = [
             # Use -isystem instead of -resource-dir to avoid conflicts with the
@@ -71,78 +74,183 @@ def declare_llvm_targets(*, suffix = ""):
             "{resource_dir}/include",
         ],
         data = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ],
         format = {
-            "resource_dir": ":builtin_resource_dir",
+            "resource_dir": ":builtin_resource_dir_expanded",
         },
         visibility = ["//visibility:public"],
     )
 
-    native.filegroup(
-        name = "cxxfilt_file",
-        srcs = ["bin/c++filt" + suffix],
-    )
-
-    native.filegroup(
-        name = "llvm_nm_file",
-        srcs = ["bin/llvm-nm" + suffix],
-    )
-
+    # clang-cl requires joined -Xclang arguments when Bazel uses response files.
     cc_args(
-        name = "static_library_validator_args",
+        name = "compile_resource_dir_msvc",
         actions = [
-            "@rules_cc//cc/toolchains/actions:validate_static_library",
+            "@rules_cc//cc/toolchains/actions:compile_actions",
+        ],
+        allowlist_include_directories = [
+            ":builtin_resource_dir_expanded",
+        ],
+        args = [
+            "-Xclang=-internal-isystem",
+            "-Xclang={resource_dir}/include",
         ],
         data = [
-            ":cxxfilt_file",
-            ":llvm_nm_file",
+            ":builtin_resource_dir_expanded",
         ],
-        env = {
-            "LLVM_CXXFILT": "{cxxfilt}",
-            "LLVM_NM": "{llvm_nm}",
-        },
         format = {
-            "cxxfilt": ":cxxfilt_file",
-            "llvm_nm": ":llvm_nm_file",
+            "resource_dir": ":builtin_resource_dir_expanded",
         },
         visibility = ["//visibility:public"],
     )
 
     cc_tool(
         name = "static_library_validator",
-        src = platform_extra_binary("bin/static-library-validator"),
+        src = "@llvm//tools/internal:static-library-validator",
         data = [
-            ":cxxfilt_file",
-            ":llvm_nm_file",
+            "bin/c++filt" + suffix,
+            "bin/llvm-nm" + suffix,
         ],
+        env = {
+            "LLVM_CXXFILT": "{cxxfilt}",
+            "LLVM_NM": "{llvm_nm}",
+        },
+        format = {
+            "cxxfilt": "bin/c++filt" + suffix,
+            "llvm_nm": "bin/llvm-nm" + suffix,
+        },
     )
 
-    COMMON_TOOLS = {
+    TOOLS_WITHOUT_LINKER = {
         "@rules_cc//cc/toolchains/actions:assembly_actions": ":clang",
         "@rules_cc//cc/toolchains/actions:c_compile": ":clang",
+        "@rules_cc//cc/toolchains/actions:gcov": ":gcov",
+        "@rules_cc//cc/toolchains/actions:llvm_cov": ":llvm-cov",
+        "@rules_cc//cc/toolchains/actions:llvm_profdata": ":llvm-profdata",
         "@rules_cc//cc/toolchains/actions:objc_compile": ":clang",
         "@llvm//toolchain:cpp_compile_actions_without_header_parsing": ":clang++",
-        "@rules_cc//cc/toolchains/actions:cpp_header_parsing": ":header_parser",
-        "@rules_cc//cc/toolchains/actions:link_actions": ":lld",
         "@rules_cc//cc/toolchains/actions:objcopy_embed_data": ":llvm-objcopy",
         "@rules_cc//cc/toolchains/actions:dwp": ":llvm-dwp",
         "@rules_cc//cc/toolchains/actions:strip": ":llvm-strip",
+    }
+    BASE_TOOLS = TOOLS_WITHOUT_LINKER | {
+        "@rules_cc//cc/toolchains/actions:link_actions": ":lld",
+    }
+
+    COMPLETE_ONLY_TOOLS = {
+        "@rules_cc//cc/toolchains/actions:cpp_header_parsing": ":header_parser",
     } | _VALIDATE_STATIC_LIBRARY_TOOL
 
     cc_tool_map(
         name = "default_tools",
-        tools = COMMON_TOOLS | {
+        tools = BASE_TOOLS | COMPLETE_ONLY_TOOLS | {
             "@rules_cc//cc/toolchains/actions:ar_actions": ":llvm-ar",
         },
         visibility = ["//visibility:public"],
     )
 
     cc_tool_map(
-        name = "tools_with_libtool",
-        tools = COMMON_TOOLS | {
+        name = "tools_with_interface_libraries",
+        tools = TOOLS_WITHOUT_LINKER | COMPLETE_ONLY_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:link_executable_actions": ":lld",
+            "@rules_cc//cc/toolchains/actions:dynamic_library_link_actions": ":link-wrapper",
+            "@rules_cc//cc/toolchains/actions:ar_actions": ":llvm-ar",
+        },
+        visibility = ["//visibility:public"],
+    )
+
+    cc_tool_map(
+        name = "staged_default_tools",
+        tools = BASE_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:ar_actions": ":llvm-ar",
+        },
+        visibility = ["//visibility:public"],
+    )
+
+    cc_tool_map(
+        name = "staged_tools_with_libtool",
+        tools = BASE_TOOLS | {
             "@rules_cc//cc/toolchains/actions:ar_actions": ":llvm-libtool-darwin",
         },
+        visibility = ["//visibility:public"],
+    )
+
+    native.alias(
+        name = "default_tools_for_runtime",
+        actual = select({
+            "@llvm//toolchain:runtimes_all": ":default_tools",
+            "//conditions:default": ":staged_default_tools",
+        }),
+        visibility = ["//visibility:public"],
+    )
+
+    native.alias(
+        name = "tools_with_libtool_for_runtime",
+        actual = select({
+            "@llvm//toolchain:runtimes_all": ":tools_with_libtool",
+            "//conditions:default": ":staged_tools_with_libtool",
+        }),
+        visibility = ["//visibility:public"],
+    )
+
+    cc_tool_map(
+        name = "tools_with_libtool",
+        tools = BASE_TOOLS | COMPLETE_ONLY_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:ar_actions": ":llvm-libtool-darwin",
+        },
+        visibility = ["//visibility:public"],
+    )
+
+    cc_tool_map(
+        name = "tools_with_dsym",
+        tools = BASE_TOOLS | COMPLETE_ONLY_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:link_actions": ":link-wrapper",
+            "@rules_cc//cc/toolchains/actions:ar_actions": ":llvm-ar",
+        },
+        visibility = ["//visibility:public"],
+    )
+
+    cc_tool_map(
+        name = "tools_with_dsym_and_libtool",
+        tools = BASE_TOOLS | COMPLETE_ONLY_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:link_actions": ":link-wrapper",
+            "@rules_cc//cc/toolchains/actions:ar_actions": ":llvm-libtool-darwin",
+        },
+        visibility = ["//visibility:public"],
+    )
+
+    cc_tool_map(
+        name = "tools_for_msvc",
+        tools = BASE_TOOLS | COMPLETE_ONLY_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:assembly_actions": ":clang-cl",
+            "@rules_cc//cc/toolchains/actions:c_compile": ":clang-cl",
+            "@rules_cc//cc/toolchains/actions:objc_compile": ":clang-cl",
+            "@llvm//toolchain:cpp_compile_actions_without_header_parsing": ":clang-cl",
+            "@rules_cc//cc/toolchains/actions:ar_actions": ":llvm-ar",
+            "@rules_cc//cc/toolchains/actions:link_actions": ":lld-link",
+        },
+        visibility = ["//visibility:public"],
+    )
+
+    cc_tool_map(
+        name = "staged_tools_for_msvc",
+        tools = BASE_TOOLS | {
+            "@rules_cc//cc/toolchains/actions:assembly_actions": ":clang-cl",
+            "@rules_cc//cc/toolchains/actions:c_compile": ":clang-cl",
+            "@rules_cc//cc/toolchains/actions:objc_compile": ":clang-cl",
+            "@llvm//toolchain:cpp_compile_actions_without_header_parsing": ":clang-cl",
+            "@rules_cc//cc/toolchains/actions:ar_actions": ":llvm-ar",
+            "@rules_cc//cc/toolchains/actions:link_actions": ":lld-link",
+        },
+        visibility = ["//visibility:public"],
+    )
+
+    native.alias(
+        name = "tools_for_msvc_for_runtime",
+        actual = select({
+            "@llvm//toolchain:runtimes_all": ":tools_for_msvc",
+            "//conditions:default": ":staged_tools_for_msvc",
+        }),
         visibility = ["//visibility:public"],
     )
 
@@ -150,20 +258,30 @@ def declare_llvm_targets(*, suffix = ""):
         name = "clang",
         src = "bin/clang" + suffix,
         data = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ],
         capabilities = ["@rules_cc//cc/toolchains/capabilities:supports_pic"],
-        allowlist_include_directories = [":builtin_resource_dir"],
+        allowlist_include_directories = [":builtin_resource_dir_expanded"],
     )
 
     cc_tool(
         name = "clang++",
         src = "bin/clang++" + suffix,
         data = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ],
         capabilities = ["@rules_cc//cc/toolchains/capabilities:supports_pic"],
-        allowlist_include_directories = [":builtin_resource_dir"],
+        allowlist_include_directories = [":builtin_resource_dir_expanded"],
+    )
+
+    cc_tool(
+        name = "clang-cl",
+        src = "bin/clang-cl" + suffix,
+        data = [
+            ":builtin_resource_dir_expanded",
+        ],
+        capabilities = [],  # no pic support when targeting MSVC
+        allowlist_include_directories = [":builtin_resource_dir_expanded"],
     )
 
     cc_tool(
@@ -173,8 +291,55 @@ def declare_llvm_targets(*, suffix = ""):
             "bin/ld.lld" + suffix,
             "bin/ld64.lld" + suffix,
             "bin/lld" + suffix,
+            "bin/lld-link" + suffix,
             "bin/wasm-ld" + suffix,
         ],
+        capabilities = ["@rules_cc//cc/toolchains/capabilities:supports_start_end_lib"],
+    )
+
+    cc_tool(
+        name = "lld-link",
+        src = "bin/lld-link" + suffix,
+    )
+
+    cc_tool(
+        name = "link-wrapper",
+        src = "@llvm//tools/internal:link-wrapper",
+        data = [
+            ":clangxx_file",
+            ":dsymutil_file",
+            ":strip_file",
+            "bin/ld.lld" + suffix,
+            "bin/ld64.lld" + suffix,
+            "bin/lld" + suffix,
+            "bin/llvm-ifs" + suffix,
+            "bin/llvm-nm" + suffix,
+            "bin/llvm-readtapi" + suffix,
+            "bin/wasm-ld" + suffix,
+        ],
+        capabilities = [
+            "@rules_cc//cc/toolchains/capabilities:has_configured_linker_path",
+            "@rules_cc//cc/toolchains/capabilities:supports_interface_shared_libraries",
+            "@rules_cc//cc/toolchains/capabilities:supports_start_end_lib",
+        ],
+        env = {
+            "COMPILER_PATH": "{llvm_bin}/llvm-",
+            "LLVM_CLANGXX": "{clangxx}",
+            "LLVM_DSYMUTIL": "{dsymutil}",
+            "LLVM_IFS": "{llvm_ifs}",
+            "LLVM_NM": "{llvm_nm}",
+            "LLVM_READTAPI": "{llvm_readtapi}",
+            "LLVM_STRIP": "{strip}",
+        },
+        format = {
+            "clangxx": ":clangxx_file",
+            "dsymutil": ":dsymutil_file",
+            "llvm_bin": ":llvm_bin_directory",
+            "llvm_ifs": "bin/llvm-ifs" + suffix,
+            "llvm_nm": "bin/llvm-nm" + suffix,
+            "llvm_readtapi": "bin/llvm-readtapi" + suffix,
+            "strip": ":strip_file",
+        },
     )
 
     cc_tool(
@@ -198,6 +363,21 @@ def declare_llvm_targets(*, suffix = ""):
     )
 
     cc_tool(
+        name = "gcov",
+        src = "bin/gcov" + suffix,
+    )
+
+    cc_tool(
+        name = "llvm-cov",
+        src = "bin/llvm-cov" + suffix,
+    )
+
+    cc_tool(
+        name = "llvm-profdata",
+        src = "bin/llvm-profdata" + suffix,
+    )
+
+    cc_tool(
         name = "llvm-strip",
         src = "bin/llvm-strip" + suffix,
         # TODO: Remove this once rules_cc includes validate_static_library in
@@ -205,16 +385,24 @@ def declare_llvm_targets(*, suffix = ""):
         # directly. This hangs validator files off strip because strip is an
         # exec-configured tool already included in rules_cc 0.2.18's legacy
         # file groups.
-        data = platform_extra_binary_files("bin/static-library-validator") + [
-            ":cxxfilt_file",
-            ":llvm_nm_file",
+        data = select({
+            "@llvm//toolchain:runtimes_all": [
+                "@llvm//tools/internal:static-library-validator",
+            ],
+            "//conditions:default": [],
+        }) + [
+            "bin/c++filt" + suffix,
+            "bin/llvm-nm" + suffix,
+            "bin/gcov" + suffix,
+            "bin/llvm-cov" + suffix,
+            "bin/llvm-profdata" + suffix,
         ],
     )
 
     include_path(
         name = "macos_target_headers",
         srcs = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
             "@macos_sdk//sysroot",
         ],
     )
@@ -223,7 +411,7 @@ def declare_llvm_targets(*, suffix = ""):
     include_path(
         name = "linux_target_headers",
         srcs = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ] + select({
             "@llvm//toolchain:runtimes_all": [
                 "@llvm//runtimes/cxxstdlib:headers_include_search_directory",
@@ -231,14 +419,14 @@ def declare_llvm_targets(*, suffix = ""):
             ],
             "//conditions:default": [],
         }) + [
-            "@kernel_headers//:kernel_headers_directory",
-            "@llvm//sanitizers:sanitizers_headers_include_search_directory",
+            "@llvm//toolchain/args/linux:kernel_headers_expanded",
+            "@llvm//toolchain/args/linux:sanitizer_headers_expanded",
         ] + select({
             "@llvm//platforms/config:musl": [
                 "@llvm//runtimes/musl:musl_headers_include_search_directory",
             ],
             "@llvm//platforms/config:gnu": [
-                "@llvm//runtimes/glibc:glibc_headers_include_search_directory",
+                "@llvm//toolchain/args/linux:glibc_headers_expanded",
             ],
         }),
     )
@@ -247,25 +435,45 @@ def declare_llvm_targets(*, suffix = ""):
     include_path(
         name = "windows_target_headers",
         srcs = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ] + select({
-            "@llvm//toolchain:runtimes_all": [
+            "@llvm//toolchain:runtimes_all_windows_gnu": [
+                "@llvm//runtimes/cxxstdlib:headers_include_search_directory",
+                "@llvm//runtimes/cxxstdlib:abi_headers_include_search_directory",
+            ],
+            "@llvm//toolchain:runtimes_all_windows_gnullvm": [
                 "@llvm//runtimes/cxxstdlib:headers_include_search_directory",
                 "@llvm//runtimes/cxxstdlib:abi_headers_include_search_directory",
             ],
             "//conditions:default": [],
-        }) + [
-            "@mingw//:mingw_generated_headers_crt_directory",
-            "@mingw//:mingw_w64_headers_include_directory",
-            "@mingw//:mingw_w64_headers_crt_directory",
-            "@mingw//:mingw_w64_winpthreads_include_directory",
-        ],
+        }) + select({
+            "@llvm//constraints/windows/abi:gnu": [
+                "@mingw//:mingw_generated_headers_crt_directory",
+                "@mingw//:mingw_w64_headers_include_directory",
+                "@mingw//:mingw_w64_headers_crt_directory",
+                "@mingw//:mingw_w64_winpthreads_include_directory",
+            ],
+            "@llvm//constraints/windows/abi:gnullvm": [
+                "@mingw//:mingw_generated_headers_crt_directory",
+                "@mingw//:mingw_w64_headers_include_directory",
+                "@mingw//:mingw_w64_headers_crt_directory",
+                "@mingw//:mingw_w64_winpthreads_include_directory",
+            ],
+            "@llvm//constraints/windows/abi:msvc": [
+                "@msvc_runtime//:msvc_include",
+                "@windows_sdk//:winsdk_ucrt_include",
+                "@windows_sdk//:winsdk_shared_include",
+                "@windows_sdk//:winsdk_um_include",
+                "@windows_sdk//:winsdk_winrt_include",
+            ],
+            "@llvm//constraints/windows/abi:unconstrained": [],
+        }),
     )
 
     include_path(
         name = "wasm_target_headers",
         srcs = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
             # TODO(zbarsky): We'll want to add wasi libc headers here.
         ],
     )

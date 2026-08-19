@@ -4,8 +4,9 @@ load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@llvm//3rd_party/llvm-project/21.x/libcxx:libcxx_headers.bzl", "LIBCXX_HEADERS_FILES_21")
 load("@llvm//3rd_party/llvm-project/22.x/libcxx:libcxx_headers.bzl", "LIBCXX_HEADERS_FILES_22")
-load("@llvm//toolchain/runtimes:cc_runtime_shared_library.bzl", "cc_runtime_stage1_shared_library")
-load("@llvm//toolchain/runtimes:cc_runtime_static_library.bzl", "cc_runtime_stage0_static_library")
+load("@llvm//3rd_party/llvm-project/23.x/libcxx:libcxx_headers.bzl", "LIBCXX_HEADERS_FILES_23")
+load("@llvm//toolchain/runtimes:cc_runtime_shared_library.bzl", "cc_runtime_stage1_asan_shared_library")
+load("@llvm//toolchain/runtimes:cc_runtime_static_library.bzl", "cc_runtime_stage0_asan_static_library")
 load("@llvm-project//:vars.bzl", "LLVM_VERSION_MAJOR")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
@@ -23,8 +24,16 @@ filegroup(
 )
 
 filegroup(
+    name = "libcxx_23_headers_files",
+    srcs = LIBCXX_HEADERS_FILES_23,
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
     name = "libcxx_headers_files",
     srcs = ([
+        ":libcxx_23_headers_files",
+    ] if int(LLVM_VERSION_MAJOR) >= 23 else [
         ":libcxx_22_headers_files",
     ] if int(LLVM_VERSION_MAJOR) >= 22 else [
         ":libcxx_21_headers_files",
@@ -56,7 +65,9 @@ _CONFIG_SITE_LIBCPP_VISIBILITY_LINES = [
 
 _CONFIG_SITE_GENERIC_LINES = [
     "#define _LIBCPP_ABI_VERSION             1",
+    "#ifndef _LIBCPP_ABI_NAMESPACE",
     "#define _LIBCPP_ABI_NAMESPACE           __1",
+    "#endif",
     "#define _LIBCPP_ABI_FORCE_ITANIUM       0",
     "#define _LIBCPP_ABI_FORCE_MICROSOFT     0",
     "#define _LIBCPP_HAS_THREADS             1 // TODO: Handle no threads",
@@ -74,7 +85,10 @@ _CONFIG_SITE_GENERIC_LINES = [
     "#define _LIBCPP_HAS_STD_MODULES         0",
     "#define _LIBCPP_HAS_TIME_ZONE_DATABASE  1",
     "#define _LIBCPP_HAS_VENDOR_AVAILABILITY_ANNOTATIONS 0",
-    "#define _LIBCPP_INSTRUMENTED_WITH_ASAN  0",
+    "#define _LIBCPP_INSTRUMENTED_WITH_ASAN  __has_feature(address_sanitizer)",
+    "#define _LIBCPP_LIBC_PICOLIBC 0",
+    "#define _LIBCPP_LIBC_NEWLIB 0",
+    "#define _LIBCPP_LIBC_LLVM_LIBC 0",
     "",
     "#define _LIBCPP_PSTL_BACKEND_SERIAL",
     "// #define _LIBCPP_PSTL_BACKEND_STD_THREAD",
@@ -178,7 +192,6 @@ cc_library(
         "src/filesystem/path.cpp",
         "src/functional.cpp",
         "src/hash.cpp",
-        "src/include/apple_availability.h",
         "src/include/atomic_support.h",
         "src/include/config_elast.h",
         "src/include/refstring.h",
@@ -222,7 +235,9 @@ cc_library(
         "src/variant.cpp",
         "src/vector.cpp",
         "src/verbose_abort.cpp",
-    ] + [
+    ] + ([
+        "src/include/apple_availability.h",
+    ] if int(LLVM_VERSION_MAJOR) < 23 else []) + [
         # LIBCXX_ENABLE_THREADS
         "src/atomic.cpp",
         "src/barrier.cpp",
@@ -255,7 +270,9 @@ cc_library(
         "src/ostream.cpp",
         "src/regex.cpp",
         "src/strstream.cpp",
-    ] + [
+    ] + ([
+        "src/text_encoding.cpp",
+    ] if int(LLVM_VERSION_MAJOR) >= 23 else []) + [
         # LIBCXX_ENABLE_FILESYSTEM
         "src/filesystem/directory_entry.cpp",
         "src/filesystem/directory_iterator.cpp",
@@ -277,7 +294,7 @@ cc_library(
     ],
     copts = [
         "-faligned-allocation",
-        "-std=c++23",
+        "-std=c++26" if int(LLVM_VERSION_MAJOR) >= 23 else "-std=c++23",
         "-fvisibility=hidden",
         "-fvisibility-inlines-hidden",
 
@@ -324,10 +341,17 @@ cc_library(
         "@llvm//platforms/config:gnu": [
             "@glibc//:gnu_libc_headers",
         ],
-        "@platforms//os:windows": [
+        "@platforms//os:windows": [],
+        "@platforms//os:macos": [],
+    }) + select({
+        "@llvm//constraints/windows/abi:gnu": [
             "@mingw//:mingw_headers",
         ],
-        "@platforms//os:macos": [],
+        "@llvm//constraints/windows/abi:gnullvm": [
+            "@mingw//:mingw_headers",
+        ],
+        "@llvm//constraints/windows/abi:msvc": [],
+        "@llvm//constraints/windows/abi:unconstrained": [],
     }),
     includes = [
         "include",
@@ -347,9 +371,10 @@ cc_library(
     ]) + [
         "@llvm-project//libcxxabi:textual_hdrs",
     ],
+    visibility = ["//compiler-rt:__pkg__"],
 )
 
-cc_runtime_stage0_static_library(
+cc_runtime_stage0_asan_static_library(
     name = "libcxx.static",
     visibility = ["//visibility:public"],
     deps = [
@@ -357,7 +382,7 @@ cc_runtime_stage0_static_library(
     ],
 )
 
-cc_runtime_stage1_shared_library(
+cc_runtime_stage1_asan_shared_library(
     name = "libcxx.shared",
     shared_lib_name = "libc++.so.1",
     user_link_flags = [

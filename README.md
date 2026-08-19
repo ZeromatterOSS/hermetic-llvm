@@ -80,15 +80,10 @@ bazel query 'kind(toolchain, @llvm//toolchain:all)'
 ### Cgo compatibility
 To make the vanilla Go compiler work with a fully hermetic toolchain, we had to send some patches upstream. Only versions of Go >= 1.27 are supported out of the box.
 
-To use this toolchain with earlier versions of Go, the compiler must be built from source with our patches. Luckily we have a patch to `rules_go` to allow doing that as part of your build graph.
+To use this toolchain with earlier versions of Go, the compiler must be built from source with our patches. Luckily `rules_go` supports this.
 
 ```
-archive_override(
-    module_name = "rules_go",
-    integrity = "sha256-8ezQcDyHHp/+xa9NbUJO/3/kDEFFmJaV4pb1fd99m74=",
-    strip_prefix = "rules_go-62d798d48ae153e048a7f9c43ba68cfa1ea10924",
-    url = "https://github.com/bazel-contrib/rules_go/archive/62d798d48ae153e048a7f9c43ba68cfa1ea10924.tar.gz",
-)
+bazel_dep(name = "rules_go", version = "0.61.0")
 
 go_sdk = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.from_file(
@@ -109,7 +104,7 @@ e2e/wasm has an example of a fully working Cgo setup.
 We highly recommend using [rules_rs](https://github.com/hermeticbuild/rules_rs) to seamlessly interop the Rust and CC toolchains. It is best to use the toolchains and platforms defined by that ruleset to configure everything properly.
 
 If you wish to setup things manually, you will likely require a few flags:
-- Rust passes `-lgcc_s` when linking, so you will want to set `--@llvm//config:experimental_stub_libgcc_s=True` flag to provide it.
+- Rust passes `-lgcc_s` when linking, so make sure you have not set `--@llvm//config:experimental_stub_libgcc_s=False`.
 - Rust `cc-rs` crate does not properly account for `$AR` and `$ARFLAGS` env vars, so it does not work when `llvm-libtool-darwin` is used as the archiver. You will want to set `--@rules_cc//cc/toolchains/args/archiver_flags:use_libtool_on_macos=False` to avoid failure in build scripts using `cc-rs`.
 - Rust forces `-no-pie` when linking musl targets, while we default to `-static-pie`, which are incompatible. You can configure your platform with the `@llvm//constraints/pie:off` constraint_value to harmonize the link flags.
 
@@ -133,6 +128,10 @@ If you wish to setup things manually, you will likely require a few flags:
 | **armv7-linux-musleabihf** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **aarch64-windows-gnu ²**| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **x86_64-windows-gnu ²** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **aarch64-pc-windows-msvc ²**| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **x86_64-pc-windows-msvc ²** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **bpfeb** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **bpfel** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **wasm32-unknown-unknown** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **wasm64-unknown-unknown** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
@@ -165,17 +164,20 @@ This ensures your program runs on systems with that glibc version or newer witho
 
 Both libc++ and libstdc++ are supported. libc++ is selected by default.
 
-To select libstdc++ for a Linux glibc target, add the
-`@llvm//constraints/cxxstdlib:libstdcxx` constraint to the target platform.
+To select libstdc++ for a Linux glibc target, add a
+`@llvm//constraints/cxxstdlib:libstdcxx.<version>` constraint to the target
+platform. Supported versions are the entries declared by
+`GCC_VERSIONS` in `@llvm//3rd_party/gcc:version.bzl`; the default selected
+libstdc++ source is the latest declared version.
 
 ```starlark
 platform(
-    name = "linux_x86_64_gnu_2_28_libstdcxx",
+    name = "linux_x86_64_gnu_2_28_libstdcxx_17_0_0",
     constraint_values = [
         "@platforms//os:linux",
         "@platforms//cpu:x86_64",
         "@llvm//constraints/libc:gnu.2.28",
-        "@llvm//constraints/cxxstdlib:libstdcxx",
+        "@llvm//constraints/cxxstdlib:libstdcxx.17.0.0",
     ],
 )
 ```
@@ -183,7 +185,7 @@ platform(
 Then build with that platform:
 
 ```sh
-bazel build --platforms=//:linux_x86_64_gnu_2_28_libstdcxx //:app
+bazel build --platforms=//:linux_x86_64_gnu_2_28_libstdcxx_17_0_0 //:app
 ```
 
 libstdc++ is currently supported as a dynamic C++ runtime, so C++ binaries
@@ -221,9 +223,15 @@ constraint to the target platform.
 
 ### Windows
 
-Windows is currently supported via MinGW-w64. UCRT is used by default; MSVCRT
-can be selected by adding the `@llvm//constraints/windows/crt:msvcrt` constraint
-to the target platform. Native MSVC targets are not yet supported.
+Both MinGW-w64 and MSVC are supported.
+
+In MinGW-w64, UCRT is used by default; MSVCRT can be selected by adding the
+`@llvm//constraints/windows/crt:msvcrt` constraint to the target platform.
+
+For MSVC targets using the downloaded MSVC runtime exposed by `windows_support`, users are 
+required to accept the Visual Studio license by setting the environment variable 
+`BAZEL_MSVC_RUNTIME_VISUAL_STUDIO_EULA=1`.
+For example by specifying `--repo_env=BAZEL_MSVC_RUNTIME_VISUAL_STUDIO_EULA=1`.
 
 ### macOS notes
 
@@ -249,33 +257,25 @@ This module allows choosing a specific LLVM version for both the compiler and th
 
 ### Configure via `use_extension(...)`
 
-To select another LLVM release (for example `22.1.0`), configure the `llvm_source` extension before `use_repo(...)`:
+To select another LLVM release (for example `22.1.0`), configure the `llvm` extension before `use_repo(...)`:
 
 ```starlark
-llvm_source = use_extension("@llvm//extensions:llvm_source.bzl", "llvm_source")
-llvm_source.version(llvm_version = "22.1.0")
+llvm = use_extension("@llvm//extensions:llvm.bzl", "llvm")
+llvm.version(llvm_version = "22.1.0")
 ```
 
-Important: Since this module uses prebuilt compiler archives by default. If you set `llvm_source.version(...)` to another version, use:
+Important: Since this module uses prebuilt compiler archives by default. If you set `llvm.version(...)` to another version, use:
 
-`--@llvm//toolchain:source=bootstrapped`
+`--@llvm//toolchain:bootstrap_stage=stage1_from_source`
 
-This switches to source bootstrapping (building the compiler), which is required when prebuilts for your exact version are not available.
+This builds the compiler from source with the stage0 prebuilt seed, which is required when prebuilts for your exact version are not available.
 
 ### Starlark LLVM version variables
 
-If you need LLVM version variables from Starlark, `llvm_source` generates an `llvm_config` repo exposing those values.
-This lets consumers read LLVM version vars without eagerly fetching the entire `@llvm-project` source tree.
+The `@llvm-project` repository exposes LLVM version variables:
 
 ```starlark
-llvm_source = use_extension("@llvm//extensions:llvm_source.bzl", "llvm_source")
-llvm_source.version(llvm_version = "22.1.0")
-use_repo(llvm_source, "llvm_config")
-```
-
-Then:
-```starlark
-load("@llvm_config//:version.bzl", "LLVM_VERSION", "llvm_vars")
+load("@llvm-project//:vars.bzl", "LLVM_VERSION", "llvm_vars")
 ```
 
 # Additional LLVM targets
@@ -347,6 +347,14 @@ See https://github.com/hermeticbuild/hermetic-llvm/milestone/1
 - [JetBrains](https://github.com/JetBrains/intellij-community)
 - [Nativelink](https://github.com/TraceMachina/nativelink)
 - [formatjs](https://github.com/formatjs/formatjs)
+- [Etsy](https://etsy.com)
+- [Patagia](https://patagia.se)
+- [OpenROAD](https://github.com/The-OpenROAD-Project/OpenROAD)
+- [kepler-formal](https://github.com/keplertech/kepler-formal)
+- [Xybrid](https://github.com/xybrid-ai/xybrid)
+- [Google XLS](https://github.com/google/xls)
+- [Drake](https://github.com/RobotLocomotion/drake)
+- [Internet Computer](https://github.com/dfinity/ic)
 
 ## Prior art
 

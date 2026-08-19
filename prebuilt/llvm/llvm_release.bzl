@@ -1,4 +1,4 @@
-load("@llvm_config//:version.bzl", "LLVM_VERSION_MAJOR")
+load("@llvm-project//:vars.bzl", "LLVM_VERSION_MAJOR")
 load("@tar.bzl", "mtree_mutate", "mtree_spec", "tar")
 load("//prebuilt:mtree.bzl", "mtree")
 load("//tools:defs.bzl", "TOOLCHAIN_BINARIES")
@@ -21,7 +21,7 @@ def llvm_release(name, bin_suffix = ""):
     )
 
     bin_files = {
-        "@llvm-project//llvm:llvm.stripped": "bin/llvm" + bin_suffix,
+        "//toolchain/bootstrap/stage3:llvm": "bin/llvm" + bin_suffix,
         "@llvm-project//compiler-rt:asan_ignorelist": "lib/clang/{llvm_major}/share/asan_ignorelist.txt",
         "@llvm-project//compiler-rt:msan_ignorelist": "lib/clang/{llvm_major}/share/msan_ignorelist.txt",
     }
@@ -32,14 +32,6 @@ def llvm_release(name, bin_suffix = ""):
         symlinks = {
             "bin/" + binary + bin_suffix: "llvm" + bin_suffix
             for binary in ["clang-{llvm_major}"] + TOOLCHAIN_BINARIES
-        } | {
-            # TODO(zbarsky): Consider adding these once LLVM multicall supports them.
-            "bin/" + binary + bin_suffix: "empty"
-            for binary in [
-                "clang-tidy",
-                "clang-format",
-                "clangd",
-            ]
         },
         format = {
             "llvm_major": LLVM_VERSION_MAJOR,

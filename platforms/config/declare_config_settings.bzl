@@ -1,6 +1,8 @@
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("//constraints/libc:libc_versions.bzl", "GLIBCS", "LIBCS")
-load("//platforms:common.bzl", "LIBC_SUPPORTED_TARGETS", "SUPPORTED_TARGETS")
+load("//constraints/windows/abi:abis.bzl", "WINDOWS_ABIS")
+load("//platforms:common.bzl", "LIBC_SUPPORTED_TARGETS", "SUPPORTED_TARGETS", "WINDOWS_ABI_SUPPORTED_TARGETS")
+load("//toolchain:bootstrap_stages.bzl", "BOOTSTRAP_STAGES")
 
 def declare_config_settings():
     for (target_os, target_cpu) in SUPPORTED_TARGETS:
@@ -13,19 +15,21 @@ def declare_config_settings():
             visibility = ["//visibility:public"],
         )
 
-        native.config_setting(
-            name = "{}_{}_prebuilt".format(target_os, target_cpu),
-            constraint_values = [
-                "@platforms//cpu:" + target_cpu,
-                "@platforms//os:" + target_os,
-            ],
-            flag_values = {
-                "//toolchain:source": "prebuilt",
-            },
-            visibility = ["//visibility:public"],
-        )
+        for bootstrap_stage in BOOTSTRAP_STAGES:
+            native.config_setting(
+                name = "%s_%s_%s" % (target_os, target_cpu, bootstrap_stage),
+                constraint_values = [
+                    "@platforms//cpu:" + target_cpu,
+                    "@platforms//os:" + target_os,
+                ],
+                flag_values = {
+                    "//toolchain:bootstrap_stage": bootstrap_stage,
+                },
+                visibility = ["//visibility:public"],
+            )
 
     declare_config_settings_libc_aware()
+    declare_config_settings_windows_abi_aware()
 
 def declare_config_settings_libc_aware():
     for (target_os, target_cpu) in LIBC_SUPPORTED_TARGETS:
@@ -69,3 +73,16 @@ def declare_config_settings_libc_aware():
         ],
         visibility = ["//visibility:public"],
     )
+
+def declare_config_settings_windows_abi_aware():
+    for abi in WINDOWS_ABIS:
+        for (target_os, target_cpu) in WINDOWS_ABI_SUPPORTED_TARGETS:
+            native.config_setting(
+                name = "{}_{}_{}".format(target_os, target_cpu, abi),
+                constraint_values = [
+                    "@platforms//cpu:" + target_cpu,
+                    "@platforms//os:" + target_os,
+                    "//constraints/windows/abi:" + abi,
+                ],
+                visibility = ["//visibility:public"],
+            )
