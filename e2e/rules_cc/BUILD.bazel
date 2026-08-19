@@ -888,7 +888,10 @@ platform_transition_binary(
 
 cc_test(
     name = "windows_test",
-    srcs = ["windows_test.cc"],
+    srcs = [
+        "windows_intrinsics_test.c",
+        "windows_test.cc",
+    ],
     exec_properties = {"test.no-remote": "1"},
     linkopts = [
         "-luuid",
