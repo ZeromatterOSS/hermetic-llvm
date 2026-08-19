@@ -44,7 +44,7 @@ def declare_llvm_targets(*, suffix = ""):
         name = "header_parser",
         src = "@llvm//tools/internal:header-parser",
         data = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
             ":clangxx_file",
         ],
         env = {
@@ -53,7 +53,7 @@ def declare_llvm_targets(*, suffix = ""):
         format = {
             "clangxx": ":clangxx_file",
         },
-        allowlist_include_directories = [":builtin_resource_dir"],
+        allowlist_include_directories = [":builtin_resource_dir_expanded"],
     )
 
     cc_args(
@@ -62,7 +62,7 @@ def declare_llvm_targets(*, suffix = ""):
             "@rules_cc//cc/toolchains/actions:compile_actions",
         ],
         allowlist_include_directories = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ],
         args = [
             # Use -isystem instead of -resource-dir to avoid conflicts with the
@@ -74,10 +74,10 @@ def declare_llvm_targets(*, suffix = ""):
             "{resource_dir}/include",
         ],
         data = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ],
         format = {
-            "resource_dir": ":builtin_resource_dir",
+            "resource_dir": ":builtin_resource_dir_expanded",
         },
         visibility = ["//visibility:public"],
     )
@@ -89,17 +89,17 @@ def declare_llvm_targets(*, suffix = ""):
             "@rules_cc//cc/toolchains/actions:compile_actions",
         ],
         allowlist_include_directories = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ],
         args = [
             "-Xclang=-internal-isystem",
             "-Xclang={resource_dir}/include",
         ],
         data = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ],
         format = {
-            "resource_dir": ":builtin_resource_dir",
+            "resource_dir": ":builtin_resource_dir_expanded",
         },
         visibility = ["//visibility:public"],
     )
@@ -258,30 +258,30 @@ def declare_llvm_targets(*, suffix = ""):
         name = "clang",
         src = "bin/clang" + suffix,
         data = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ],
         capabilities = ["@rules_cc//cc/toolchains/capabilities:supports_pic"],
-        allowlist_include_directories = [":builtin_resource_dir"],
+        allowlist_include_directories = [":builtin_resource_dir_expanded"],
     )
 
     cc_tool(
         name = "clang++",
         src = "bin/clang++" + suffix,
         data = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ],
         capabilities = ["@rules_cc//cc/toolchains/capabilities:supports_pic"],
-        allowlist_include_directories = [":builtin_resource_dir"],
+        allowlist_include_directories = [":builtin_resource_dir_expanded"],
     )
 
     cc_tool(
         name = "clang-cl",
         src = "bin/clang-cl" + suffix,
         data = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ],
         capabilities = [],  # no pic support when targeting MSVC
-        allowlist_include_directories = [":builtin_resource_dir"],
+        allowlist_include_directories = [":builtin_resource_dir_expanded"],
     )
 
     cc_tool(
