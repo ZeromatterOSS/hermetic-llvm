@@ -53,7 +53,10 @@ def declare_llvm_targets(*, suffix = ""):
         format = {
             "clangxx": ":clangxx_file",
         },
-        allowlist_include_directories = [":builtin_resource_dir_expanded"],
+        allowlist_include_directories = [
+            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
+        ],
     )
 
     cc_args(
@@ -62,6 +65,7 @@ def declare_llvm_targets(*, suffix = ""):
             "@rules_cc//cc/toolchains/actions:compile_actions",
         ],
         allowlist_include_directories = [
+            ":builtin_resource_dir",
             ":builtin_resource_dir_expanded",
         ],
         args = [
@@ -89,6 +93,7 @@ def declare_llvm_targets(*, suffix = ""):
             "@rules_cc//cc/toolchains/actions:compile_actions",
         ],
         allowlist_include_directories = [
+            ":builtin_resource_dir",
             ":builtin_resource_dir_expanded",
         ],
         args = [
@@ -261,7 +266,10 @@ def declare_llvm_targets(*, suffix = ""):
             ":builtin_resource_dir_expanded",
         ],
         capabilities = ["@rules_cc//cc/toolchains/capabilities:supports_pic"],
-        allowlist_include_directories = [":builtin_resource_dir_expanded"],
+        allowlist_include_directories = [
+            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
+        ],
     )
 
     cc_tool(
@@ -271,7 +279,10 @@ def declare_llvm_targets(*, suffix = ""):
             ":builtin_resource_dir_expanded",
         ],
         capabilities = ["@rules_cc//cc/toolchains/capabilities:supports_pic"],
-        allowlist_include_directories = [":builtin_resource_dir_expanded"],
+        allowlist_include_directories = [
+            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
+        ],
     )
 
     cc_tool(
@@ -281,7 +292,10 @@ def declare_llvm_targets(*, suffix = ""):
             ":builtin_resource_dir_expanded",
         ],
         capabilities = [],  # no pic support when targeting MSVC
-        allowlist_include_directories = [":builtin_resource_dir_expanded"],
+        allowlist_include_directories = [
+            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
+        ],
     )
 
     cc_tool(
