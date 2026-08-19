@@ -41,7 +41,12 @@ def platform_module_map(exec_os, exec_cpu):
     return Label(_tool_repo(exec_os, exec_cpu) + ":module_map")
 
 def resource_dir_arg(exec_os, exec_cpu):
-    return Label(_tool_repo(exec_os, exec_cpu) + ":compile_resource_dir")
+    tool_repo = _tool_repo(exec_os, exec_cpu)
+    return select({
+        "@llvm//platforms/config:windows_aarch64_msvc": [Label(tool_repo + ":compile_resource_dir_msvc")],
+        "@llvm//platforms/config:windows_x86_64_msvc": [Label(tool_repo + ":compile_resource_dir_msvc")],
+        "//conditions:default": [Label(tool_repo + ":compile_resource_dir")],
+    })
 
 def platform_cc_tool_map(exec_os, exec_cpu):
     tool_repo = _tool_repo(exec_os, exec_cpu)

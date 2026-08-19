@@ -1,3 +1,5 @@
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_test")
 load("//:rust_binary_cross_build_test_suite.bzl", "rust_binary_cross_build_test_suite")
 
 package(default_visibility = ["//visibility:public"])
@@ -5,6 +7,29 @@ package(default_visibility = ["//visibility:public"])
 filegroup(
     name = "proc_macros",
     srcs = ["@crates//:serde_derive"],
+)
+
+cargo_build_script(
+    name = "resource_dir_build_script",
+    srcs = ["resource_dir_build.rs"],
+    crate_name = "resource_dir_build_script",
+    data = ["resource_dir_probe.c"],
+    edition = "2021",
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+rust_test(
+    name = "resource_dir_build_script_test",
+    srcs = ["resource_dir_test.rs"],
+    edition = "2021",
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":resource_dir_build_script"],
 )
 
 platform(

@@ -68,6 +68,30 @@ def declare_llvm_targets(*, suffix = ""):
             # Use -isystem instead of -resource-dir to avoid conflicts with the
             # linking specific -resource-dir and rules_foreign_cc which does
             # 'CC CFLAGS LDFLAGS'. This has to be last in the search paths
+            "-Xclang",
+            "-internal-isystem",
+            "-Xclang",
+            "{resource_dir}/include",
+        ],
+        data = [
+            ":builtin_resource_dir",
+        ],
+        format = {
+            "resource_dir": ":builtin_resource_dir",
+        },
+        visibility = ["//visibility:public"],
+    )
+
+    # clang-cl requires joined -Xclang arguments when Bazel uses response files.
+    cc_args(
+        name = "compile_resource_dir_msvc",
+        actions = [
+            "@rules_cc//cc/toolchains/actions:compile_actions",
+        ],
+        allowlist_include_directories = [
+            ":builtin_resource_dir",
+        ],
+        args = [
             "-Xclang=-internal-isystem",
             "-Xclang={resource_dir}/include",
         ],
