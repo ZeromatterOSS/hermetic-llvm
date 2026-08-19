@@ -34,6 +34,16 @@ def headers_directory(name, path, visibility = None):
         visibility = visibility,
     )
 
+    # Some remote repository-content caches cannot materialize a source
+    # directory artifact. Provide an equivalent target whose DefaultInfo
+    # enumerates the files while preserving DirectoryInfo for path formatting.
+    _headers_directory(
+        name = name + "_expanded",
+        directory = name + "_directory",
+        source_directory = name + "_directory",
+        visibility = visibility,
+    )
+
 SourceDirectoryInfo = provider("Marker Provider", fields = [])
 
 def _headers_directory_impl(ctx):
