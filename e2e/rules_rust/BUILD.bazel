@@ -19,6 +19,7 @@ cargo_build_script(
         "@platforms//os:linux": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
+    tools = ["@llvm//:builtin_resource_dir"],
 )
 
 rust_test(

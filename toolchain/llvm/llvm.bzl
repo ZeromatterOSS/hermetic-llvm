@@ -402,7 +402,7 @@ def declare_llvm_targets(*, suffix = ""):
     include_path(
         name = "macos_target_headers",
         srcs = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
             "@macos_sdk//sysroot",
         ],
     )
@@ -411,7 +411,7 @@ def declare_llvm_targets(*, suffix = ""):
     include_path(
         name = "linux_target_headers",
         srcs = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ] + select({
             "@llvm//toolchain:runtimes_all": [
                 "@llvm//runtimes/cxxstdlib:headers_include_search_directory",
@@ -419,14 +419,14 @@ def declare_llvm_targets(*, suffix = ""):
             ],
             "//conditions:default": [],
         }) + [
-            "@kernel_headers//:kernel_headers_directory",
-            "@llvm//sanitizers:sanitizers_headers_include_search_directory",
+            "@llvm//toolchain/args/linux:kernel_headers_expanded",
+            "@llvm//toolchain/args/linux:sanitizer_headers_expanded",
         ] + select({
             "@llvm//platforms/config:musl": [
                 "@llvm//runtimes/musl:musl_headers_include_search_directory",
             ],
             "@llvm//platforms/config:gnu": [
-                "@llvm//runtimes/glibc:glibc_headers_include_search_directory",
+                "@llvm//toolchain/args/linux:glibc_headers_expanded",
             ],
         }),
     )
@@ -435,7 +435,7 @@ def declare_llvm_targets(*, suffix = ""):
     include_path(
         name = "windows_target_headers",
         srcs = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
         ] + select({
             "@llvm//toolchain:runtimes_all_windows_gnu": [
                 "@llvm//runtimes/cxxstdlib:headers_include_search_directory",
@@ -473,7 +473,7 @@ def declare_llvm_targets(*, suffix = ""):
     include_path(
         name = "wasm_target_headers",
         srcs = [
-            ":builtin_resource_dir",
+            ":builtin_resource_dir_expanded",
             # TODO(zbarsky): We'll want to add wasi libc headers here.
         ],
     )
