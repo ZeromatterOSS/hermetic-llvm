@@ -101,6 +101,9 @@ def declare_llvm_targets(*, suffix = ""):
             "-Xclang={resource_dir}/include",
         ],
         data = [
+            # Clang gives builtin headers special semantics only when its
+            # native resource directory is present beside the compiler.
+            ":builtin_resource_dir",
             ":builtin_resource_dir_expanded",
         ],
         format = {
