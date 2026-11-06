@@ -13,11 +13,6 @@ expanded_headers_directory(
     directory = "//runtimes/glibc:glibc_headers_include_search_directory",
 )
 
-expanded_headers_directory(
-    name = "sanitizer_headers_expanded",
-    directory = "//sanitizers:sanitizers_headers_include_search_directory",
-)
-
 # Extracted from rules_cc unix_cc_configure.bzl
 # TODO(cerisier): Extract those into proper semantic args list.
 cc_args(
@@ -103,7 +98,7 @@ cc_args(
         "//toolchain:source_compile_actions",
     ],
     allowlist_include_directories = [
-        ":sanitizer_headers_expanded",
+        "//sanitizers:sanitizers_headers_include_search_directory",
     ],
     # Make sure these sanitizer paths come after any user supplied paths, which
     # might also include another version of llvm's sanitizer headers.
@@ -114,10 +109,10 @@ cc_args(
         "{sanitizer_headers_include_search_paths}",
     ],
     data = [
-        ":sanitizer_headers_expanded",
+        "//sanitizers:sanitizers_headers_include_search_directory",
     ],
     format = {
-        "sanitizer_headers_include_search_paths": ":sanitizer_headers_expanded",
+        "sanitizer_headers_include_search_paths": "//sanitizers:sanitizers_headers_include_search_directory",
     },
 )
 
