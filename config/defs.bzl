@@ -171,6 +171,17 @@ def config_settings():
         flag_values = {"nostdlibxx": "true"},
     )
 
+    # All objects linked into an MSVC binary must agree on this CRT ABI mode.
+    # Keep ISO mode as the default; prebuilt MSVC libraries may require legacy mode.
+    bool_flag(
+        name = "msvc_iso_wide_specifiers",
+        build_setting_default = True,
+    )
+    native.config_setting(
+        name = "msvc_iso_wide_specifiers_enabled",
+        flag_values = {":msvc_iso_wide_specifiers": "true"},
+    )
+
     # This flag controls the optimization mode for the compilation of the target
     # prequisites like the standard C library, the C++ standard library,
     # the unwinder, etc.

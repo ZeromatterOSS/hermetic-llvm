@@ -78,7 +78,6 @@ _expanded_headers_directory = rule(
             mandatory = True,
         ),
     },
-    cfg = config.none(),
 )
 
 def _directory_info_impl(ctx):
