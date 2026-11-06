@@ -52,6 +52,35 @@ _headers_directory = rule(
     cfg = config.none(),
 )
 
+def expanded_headers_directory(name, directory, visibility = None):
+    _expanded_headers_directory(
+        name = name,
+        directory = directory,
+        visibility = visibility,
+    )
+
+# Expose a DirectoryInfo's transitive files as the default outputs. Compile
+# actions that depend on the expanded target enumerate the header files
+# themselves as inputs, so remote execution stages them; a bare directory
+# label does not.
+def _expanded_headers_directory_impl(ctx):
+    directory = ctx.attr.directory[DirectoryInfo]
+    return [
+        directory,
+        DefaultInfo(files = directory.transitive_files),
+    ]
+
+_expanded_headers_directory = rule(
+    implementation = _expanded_headers_directory_impl,
+    attrs = {
+        "directory": attr.label(
+            providers = [DirectoryInfo],
+            mandatory = True,
+        ),
+    },
+    cfg = config.none(),
+)
+
 def _directory_info_impl(ctx):
     files = ctx.attr.src[DefaultInfo].files.to_list()
     if len(files) != 1 or not files[0].is_directory:
