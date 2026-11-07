@@ -145,10 +145,28 @@ case_insensitive_vfs_overlay(
 case_insensitive_vfs_overlay(
     name = "msvc_sdk_library_case_overlay",
     roots = [
+        ":msvc_com_support_libraries_directory",
+        ":msvc_common_support_libraries_directory",
         ":winsdk_ucrt_lib",
         ":winsdk_um_lib",
-    ],
+    ] + select({
+        "//toolchain/features/msvc:static_crt_config": [":msvc_static_runtime_libraries_directory"],
+        "//conditions:default": [":msvc_dynamic_runtime_libraries_directory"],
+    }),
 )
+
+[
+    directory_info(
+        name = name + "_directory",
+        src = ":" + name,
+    )
+    for name in [
+        "msvc_com_support_libraries",
+        "msvc_common_support_libraries",
+        "msvc_dynamic_runtime_libraries",
+        "msvc_static_runtime_libraries",
+    ]
+]
 
 copy_to_directory(
     name = "msvc_com_support_libraries",
